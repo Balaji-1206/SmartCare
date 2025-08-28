@@ -1,0 +1,12 @@
+﻿# Node / Expo / React Native
+node_modules/
+.expo/
+.expo-shared/
+dist/
+build/
+android/
+ios/
+*.log
+.env
+.env.*
+.DS_Store
