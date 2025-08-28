@@ -1,0 +1,19 @@
+{
+  "features": [
+    "lag_1",
+    "lag_7",
+    "lag_14",
+    "lag_28",
+    "roll_mean_7",
+    "roll_std_7",
+    "roll_mean_14",
+    "roll_std_14",
+    "roll_mean_28",
+    "roll_std_28",
+    "dow",
+    "month",
+    "temperature",
+    "rainfall",
+    "humidity"
+  ]
+}

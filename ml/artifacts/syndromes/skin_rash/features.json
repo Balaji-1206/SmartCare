@@ -1,0 +1,24 @@
+{
+  "features": [
+    "y_count",
+    "lag_1",
+    "lag_7",
+    "lag_14",
+    "lag_28",
+    "roll_mean_7",
+    "roll_std_7",
+    "roll_mean_14",
+    "roll_std_14",
+    "roll_mean_28",
+    "roll_std_28",
+    "tp_lag_1",
+    "tp_lag_7",
+    "tp_mean_7",
+    "dow",
+    "month",
+    "is_weekend",
+    "temperature",
+    "rainfall",
+    "humidity"
+  ]
+}

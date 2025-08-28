@@ -1,0 +1,4 @@
+{
+  "threshold": 0.5,
+  "label_rule": ">=1 cases"
+}
