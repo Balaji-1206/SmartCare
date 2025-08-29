@@ -7,6 +7,12 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import joblib, json, os, datetime as dt
+from zoneinfo import ZoneInfo
+LOCAL_TZ = ZoneInfo("Asia/Kolkata")  # keep SmartCare on IST
+
+def _today_local_str() -> str:
+    return dt.datetime.now(tz=LOCAL_TZ).date().strftime("%Y-%m-%d")
+
 
 # ---- Robust .env loading (works no matter where you launch uvicorn) ----
 # Put your .env in project root (e.g., C:\...\smartcare\.env)
@@ -198,6 +204,19 @@ class WeatherFetchReq(BaseModel):
 # ========= FastAPI app =========
 app = FastAPI(title="SmartCare API", version="0.3.0")
 
+# api/main.py
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="SmartCare API", version="0.3.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],      # dev: allow all; lock down later if needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/")
 def root():
     return JSONResponse({
@@ -346,58 +365,54 @@ def compute_critical_alerts(demand_preds: List[DemandResItem]) -> List[dict]:
 
 @app.get("/mobile/today")
 def mobile_today():
-    # 1) Volume + delta vs yesterday
     vol = predict_volume(VolumeReq())
-
-    df = _hist_with_weather()
-    df = df.sort_values("date").reset_index(drop=True)
-
-    # last two actuals for delta% context
-    yhat_today = float(vol.predicted_visits)
-    try:
-        last_two = df.tail(2)["total_patients"].astype(float).tolist()
-        yesterday = last_two[-1] if len(last_two) >= 1 else None
-    except Exception:
-        yesterday = None
-
-    delta_pct = None
-    if yesterday and yesterday > 0:
-        delta_pct = round((yhat_today - yesterday) / yesterday * 100.0, 1)
-
-    # 2) Demand + full alerts (not sliced to just 1)
     items = list_available_items()
     demand_list = predict_demand(DemandReq(items=items))
-    alerts = compute_critical_alerts(demand_list)  # full list
-
-    # 3) Top syndromes (best-effort)
+    alerts = compute_critical_alerts(demand_list)
     try:
         syn_top = predict_syndromes(SyndromesReq(top_n=3))
         syn_payload = [s.dict() for s in syn_top]
     except Exception:
         syn_payload = []
 
-    # 4) Today’s nurse log snapshot
-    today_str = dt.date.today().strftime("%Y-%m-%d")
-    nurse_log_today = _get_nurse_log(today_str) if 'NURSE_LOGS_JSON' in globals() else {}
+    # ---- Nurse log (local today, with fallback to most recent) ----
+    nl = _load_nurse_log()
+    today_local = _today_local_str()
+    nurse_today = nl.get(today_local, {})
+    if not nurse_today and nl:
+        # show latest available entry if today's not present
+        try:
+            latest_key = max(nl.keys())
+            nurse_today = nl.get(latest_key, {})
+        except Exception:
+            nurse_today = {}
+
+    # ---- Delta vs yesterday ----
+    df = _hist_with_weather()
+    try:
+        yday = float(df.iloc[-2]["total_patients"])
+        delta_pct = round(((vol.predicted_visits - yday) / max(1.0, yday)) * 100, 1)
+    except Exception:
+        delta_pct = 0
 
     return {
-        "expected_patients": _clean_num(yhat_today),
-        "delta_vs_yesterday_pct": delta_pct,  # e.g., 20.0 means +20%
+        "expected_patients": _clean_num(vol.predicted_visits),
+        "delta_vs_yesterday_pct": delta_pct,
         "status": {
-            "level": compute_status_level(yhat_today),
+            "level": compute_status_level(vol.predicted_visits),
             "reason": "Based on percentile thresholds (last 90 days)"
         },
         "top_syndromes": syn_payload,
-        "critical_alerts": alerts,  # full list with severity + messages
+        "critical_alerts": alerts[:1],
         "demand_preview": [
             {
-              "item_code": d.item_code,
-              "yhat": _clean_num(d.yhat),
-              "p10": _clean_num(d.p10),
-              "p90": _clean_num(d.p90)
+                "item_code": d.item_code,
+                "yhat": _clean_num(d.yhat),
+                "p10": _clean_num(d.p10),
+                "p90": _clean_num(d.p90)
             } for d in demand_list
         ][:3],
-        "nurse_log_today": nurse_log_today
+        "nurse_log_today": nurse_today,
     }
 
 
@@ -483,6 +498,88 @@ def weather_fetch(req: WeatherFetchReq):
         "source": "openweather",
         "applied": {"temperature": temp, "rainfall": rain, "humidity": humid},
     }
+
+# ----- add near the other endpoints in api/main.py -----
+
+from pydantic import BaseModel
+from fastapi import HTTPException
+
+# (you already have this dict defined earlier)
+# INVENTORY = { ... }
+
+class InventoryUpsert(BaseModel):
+    item_code: str
+    on_hand: int | None = None
+    reorder_point: int | None = None
+
+    # ----- add near weather endpoints -----
+NURSE_LOG_JSON = Path("data/raw/nurse_log.json")
+
+class NurseLogReq(BaseModel):
+    date: str               # "YYYY-MM-DD"
+    fever: int | None = None
+    cough: int | None = None
+    notes: str | None = None
+    by: str | None = None
+
+def _load_nurse_log():
+    if NURSE_LOG_JSON.exists():
+        try:
+            return json.load(open(NURSE_LOG_JSON, "r"))
+        except Exception:
+            return {}
+    return {}
+
+def _save_nurse_log(entry: dict):
+    data = _load_nurse_log()
+    date = entry.get("date")
+    if not date:
+        return
+    data[date] = entry
+    NURSE_LOG_JSON.parent.mkdir(parents=True, exist_ok=True)
+    json.dump(data, open(NURSE_LOG_JSON, "w"), indent=2)
+
+@app.post("/nurse/log")
+def nurse_log(req: NurseLogReq):
+    # If client sent a date, normalize it; if not, use server-local today
+    try:
+        if req.date:
+            date_norm = pd.to_datetime(req.date).tz_localize(LOCAL_TZ, nonexistent='shift_forward', ambiguous='NaT').date().strftime("%Y-%m-%d")
+        else:
+            date_norm = _today_local_str()
+    except Exception:
+        # Fallback: try naive parse, then format
+        try:
+            date_norm = pd.to_datetime(req.date).date().strftime("%Y-%m-%d")
+        except Exception:
+            raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
+
+    entry = {
+        "date": date_norm,
+        "fever": int(req.fever) if req.fever is not None else None,
+        "cough": int(req.cough) if req.cough is not None else None,
+        "notes": req.notes,
+        "by": req.by or "Nurse",
+    }
+    _save_nurse_log(entry)
+    return {"ok": True, "saved": entry}
+
+
+@app.get("/inventory")
+def inventory_get():
+    return INVENTORY
+
+@app.post("/inventory/upsert")
+def inventory_upsert(req: InventoryUpsert):
+    code = req.item_code
+    if code not in INVENTORY:
+      raise HTTPException(404, f"Unknown item_code '{code}'")
+    if req.on_hand is not None:
+      INVENTORY[code]["on_hand"] = int(req.on_hand)
+    if req.reorder_point is not None:
+      INVENTORY[code]["reorder_point"] = int(req.reorder_point)
+    return {"ok": True, "item": INVENTORY[code]}
+
 
 @app.get("/debug/status-thresholds")
 def debug_status_thresholds():
