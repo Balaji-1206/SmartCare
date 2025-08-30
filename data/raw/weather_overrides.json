@@ -1,9 +1,5 @@
 {
-  "string": {
-    "temperature": 23.74,
-    "rainfall": null,
-    "humidity": 68
-  },
+  
   "2025-08-28": {
     "temperature": 17.54,
     "rainfall": null,

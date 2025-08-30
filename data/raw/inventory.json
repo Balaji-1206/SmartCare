@@ -1,0 +1,22 @@
+{
+  "paracetamol": {
+    "name": "Paracetamol 500mg",
+    "on_hand": 12,
+    "reorder_point": 60
+  },
+  "ors_packets": {
+    "name": "ORS Sachets",
+    "on_hand": 7,
+    "reorder_point": 1
+  },
+  "malaria_kits": {
+    "name": "Malaria Test Kits",
+    "on_hand": 30,
+    "reorder_point": 35
+  },
+  "antibiotics": {
+    "name": "Antibiotics",
+    "on_hand": 50,
+    "reorder_point": 48
+  }
+}

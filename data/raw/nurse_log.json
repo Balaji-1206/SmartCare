@@ -1,0 +1,22 @@
+{
+  "2025-08-30": {
+    "fever": 47,
+    "cough": 43,
+    "notes": "1",
+    "by": "hlo",
+    "date": "2025-08-30",
+    "diarrhea": 3,
+    "vomiting": 4,
+    "cold": 2,
+    "others": 1,
+    "hlo": {
+      "fever": 0,
+      "cough": 0,
+      "diarrhea": 0,
+      "vomiting": 0,
+      "cold": 0,
+      "others": 0,
+      "by": "hlo"
+    }
+  }
+}
