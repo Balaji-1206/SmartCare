@@ -1,4 +1,3 @@
-# api/main.py
 from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -56,9 +55,9 @@ VOL_FEATS_PATH = ART_DIR / "volume_features.json"
 VOL_INTV_PATH  = ART_DIR / "volume_intervals.json"
 
 DATA_CSV = Path("data/raw/data10yrs.csv")
-WEATHER_OVERRIDES_JSON = Path("data/raw/weather_overrides.json")  # merged into history
-NURSE_LOG_JSON = Path("data/raw/nurse_log.json")                  # nurse logs (per day)
-INVENTORY_JSON = Path("data/raw/inventory.json")                  # inventory persistence
+WEATHER_OVERRIDES_JSON = Path("data/raw/weather_overrides.json") 
+NURSE_LOG_JSON = Path("data/raw/nurse_log.json")                 
+INVENTORY_JSON = Path("data/raw/inventory.json")                  
 
 if not VOL_MODEL_PATH.exists() or not VOL_INTV_PATH.exists():
     raise RuntimeError("Volume artifacts missing. Ensure volume_model.pkl and volume_intervals.json exist in ml/artifacts/.")
@@ -125,7 +124,7 @@ def _apply_weather_overrides(df: pd.DataFrame) -> pd.DataFrame:
 
 _hist_base = _load_hist()
 def _hist_with_weather() -> pd.DataFrame:
-    return _apply_weather_overrides(_load_hist())  # re-read so weather edits reflect immediately
+    return _apply_weather_overrides(_load_hist())  
 
 # =========================
 # Feature builders
@@ -207,14 +206,14 @@ class WeatherUpsertReq(BaseModel):
     humidity: Optional[float] = None
 
 class WeatherFetchReq(BaseModel):
-    date: Optional[str] = None  # if None, use today
+    date: Optional[str] = None 
     lat: float
     lon: float
     units: str = "metric"
     provider: str = "openweather"
 
 class NurseLogReq(BaseModel):
-    date: Optional[str] = None               # "YYYY-MM-DD" (optional)
+    date: Optional[str] = None             
     fever: Optional[int] = None
     cough: Optional[int] = None
     diarrhea: Optional[int] = None
@@ -235,7 +234,7 @@ class InventoryUpsertReq(BaseModel):
 app = FastAPI(title="SmartCare API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # dev: open; lock down later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -311,10 +310,10 @@ def predict_volume(req: VolumeReq):
     p10 = yhat + p10_res
     p90 = yhat + p90_res
 
-       # get the date for which prediction was made
+    
     
 
-    pred_date = _today_local_str()  # 👈 always use clinic's today in IST
+    pred_date = _today_local_str() 
 
     return {
     "predicted_visits": _clean_num(yhat),
@@ -380,9 +379,9 @@ def _save_nurse_log_entry(date_str: str, payload: dict, merge: bool = True):
     data = _load_nurse_log()
     existing = data.get(date_str, {}) if merge else {}
 
-    # 🔹 Always ensure all symptom fields exist
+    
     for k in ["fever", "cough", "diarrhea", "vomiting", "cold"]:
-        v_old = existing.get(k, 0)  # default to 0 if not present
+        v_old = existing.get(k, 0)  
         v_new = payload.get(k)
         if v_new is not None:
             if isinstance(v_old, (int, float)) and isinstance(v_new, (int, float)):
@@ -390,9 +389,9 @@ def _save_nurse_log_entry(date_str: str, payload: dict, merge: bool = True):
             else:
                 existing[k] = int(v_new)
         elif k not in existing:
-            existing[k] = 0  # ensure key always exists
+            existing[k] = 0  
 
-    # overwrite note/author if provided
+    
     if payload.get("notes") is not None:
         existing["notes"] = payload["notes"]
     if payload.get("by") is not None:
@@ -404,7 +403,7 @@ def _save_nurse_log_entry(date_str: str, payload: dict, merge: bool = True):
 
 @app.post("/nurse/log")
 def nurse_log(req: NurseLogReq):
-    # normalize to IST calendar day (if no date supplied)
+   
     if req.date:
         try:
             date_norm = pd.to_datetime(req.date).date().strftime("%Y-%m-%d")
@@ -433,7 +432,7 @@ def debug_nurse_log():
 # Inventory (with persistence)
 # =========================
 def _load_inventory() -> dict:
-    # default seed if no file yet
+    
     return _safe_load_json(INVENTORY_JSON) or {
         "paracetamol":  {"name":"Paracetamol 500mg", "on_hand": 200, "reorder_point": 150},
         "ors_packets":  {"name":"ORS Sachets",       "on_hand":  45, "reorder_point":  60},
@@ -474,7 +473,7 @@ def compute_critical_alerts(demand_preds: List[DemandResItem], inv: dict) -> Lis
         high_today = max(0.0, float(d.p90 or need))
         weekly_high = high_today * 7.0
 
-        # 🔹 Stock vs reorder threshold checks
+        
         severity = None
         if inv_row["on_hand"] < inv_row["reorder_point"] * 0.25:
             severity = "HIGH"
@@ -491,7 +490,7 @@ def compute_critical_alerts(demand_preds: List[DemandResItem], inv: dict) -> Lis
                 "item_code": d.item_code
             })
 
-        # 🔹 Demand forecast checks
+     
         if weekly_high > inv_row["on_hand"]:
             alerts.append({
                 "type": "stockout_risk",
@@ -507,7 +506,7 @@ def compute_critical_alerts(demand_preds: List[DemandResItem], inv: dict) -> Lis
                 "item_code": d.item_code
             })
 
-    # 🔹 Sort: HIGH first, then MEDIUM, then LOW
+    
     alerts.sort(key=lambda a: 0 if a["severity"] == "HIGH" else (1 if a["severity"] == "MEDIUM" else 2))
     return alerts
 
@@ -561,7 +560,7 @@ def mobile_today():
             } for d in demand_list
         ][:3],
         "nurse_log_today": nurse_today,
-        "for_date": vol.get("for_date"),   # 👈 NEW
+        "for_date": vol.get("for_date"),  
     }
 
 

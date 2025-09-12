@@ -18,5 +18,34 @@
       "others": 0,
       "by": "hlo"
     }
+  },
+  "2025-09-01": {
+    "fever": 2,
+    "cough": 0,
+    "diarrhea": 0,
+    "vomiting": 0,
+    "cold": 0,
+    "by": "Meena",
+    "date": "2025-09-01"
+  },
+  "2025-09-08": {
+    "fever": 0,
+    "cough": 8,
+    "diarrhea": 5,
+    "vomiting": 6,
+    "cold": 1,
+    "by": "Meena",
+    "date": "2025-09-08",
+    "notes": "MM"
+  },
+  "2025-09-12": {
+    "fever": 7,
+    "cough": 10,
+    "diarrhea": 18,
+    "vomiting": 102,
+    "cold": 7,
+    "by": "Meena",
+    "date": "2025-09-12",
+    "notes": "m"
   }
 }

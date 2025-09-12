@@ -1,7 +1,7 @@
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const QUEUE_KEY = "smartcare_offline_queue"; // array of {url, body}
+const QUEUE_KEY = "smartcare_offline_queue"; 
 
 type QueueItem = { url: string; body: any };
 
