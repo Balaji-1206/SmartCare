@@ -1,110 +1,285 @@
-# SmartCare
+# 🏥 SmartCare — Primary Healthcare Intelligence & Forecasting Platform
 
-SmartCare is a healthcare operations project that combines:
-- A **FastAPI backend** for predictions and operational endpoints
-- A **React Native (Expo) mobile app** for frontline workflows
-- **ML training pipelines** for patient volume, demand, and syndrome forecasting
-- **ETL/data utilities** for preprocessing and feature engineering
+**SmartCare** is an AI-assisted clinical decision support, patient volume forecasting, epidemic surveillance, and inventory management platform designed for Primary Health Centers (PHCs) and rural clinics.
 
-## Repository Structure
+It bridges machine learning models with front-line nursing workflows, enabling healthcare staff to log daily symptoms, track medicine consumption, receive automated stockout warnings, and anticipate incoming patient surges based on historical clinic records and meteorological telemetry.
 
-- `/api` – FastAPI app and service logic
-- `/smartcare-mobile` – Expo/React Native mobile client
-- `/ml` – model training code and model artifacts
-- `/etl` – data preparation scripts
-- `/data/raw` – input and persisted JSON/CSV data
-- `/tests` – test placeholders
-- `/docs` – design/workflow placeholders
+---
 
-## Prerequisites
+## 📑 Table of Contents
 
-- Python 3.10+
-- Node.js 18+
-- npm
-- (Optional) Docker and Docker Compose
+- [Key Capabilities](#-key-capabilities)
+- [System Architecture](#-system-architecture)
+- [Repository Structure](#-repository-structure)
+- [Machine Learning Pipeline (Leak-Free)](#-machine-learning-pipeline-leak-free)
+- [API Reference](#-api-reference)
+- [Mobile Application (Expo / React Native)](#-mobile-application-expo--react-native)
+- [Getting Started](#-getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Backend Setup (FastAPI)](#backend-setup-fastapi)
+  - [Model Training](#model-training)
+  - [Running the Test Suite](#running-the-test-suite)
+  - [Mobile App Setup (Expo)](#mobile-app-setup-expo)
+  - [Environment Variables](#environment-variables)
+- [Flaws Corrected in this Release](#-flaws-corrected-in-this-release)
+- [License](#-license)
 
-## Setup
+---
 
-### 1) Backend dependencies
+## 🌟 Key Capabilities
 
-```bash
-pip install -r requirements.txt
+1. **Daily Patient Volume Forecasting**:
+   - Predicts incoming clinic visits using strictly historical temporal lags ($t-1, t-7, t-14, t-28$), 7/14/28-day rolling statistics, calendar signals (`dow`, `month`, `is_weekend`), and weather telemetry (`temperature`, `rainfall`, `humidity`).
+   - Computes dynamic status thresholds (`GREEN`, `YELLOW`, `RED`) based on 90-day clinic visit percentiles.
+   - Calculates 10th-to-90th percentile prediction intervals (`p10`, `p90`).
+
+2. **Pharmaceutical Demand Prediction**:
+   - Multi-item inventory demand predictions (`paracetamol`, `ors_packets`, `malaria_kits`, `antibiotics`).
+   - Forecasts weekly peak consumption against existing stock levels to preempt stockouts.
+   - Calculates real-time **days-to-stockout** metrics.
+
+3. **Syndromic Outbreak Surveillance**:
+   - Multi-label LightGBM classifiers predicting probabilities for 6 key clinical presentations: `fever`, `cough`, `diarrhea`, `vomiting`, `skin_rash`, `animal_bite`.
+   - Continuous 7-day surge vs. baseline cluster detection alerting staff to emerging epidemics.
+
+4. **Frontline Nurse Station Triage**:
+   - Fast, tactile stepper interface for nurses to record daily case counts and qualitative observations.
+   - 7-day visual calendar strip with past-day inspection.
+
+5. **Robust Offline Support**:
+   - Local queuing engine (`AsyncStorage`) that buffers triage logs and inventory edits during network dropouts and automatically syncs upon reconnection.
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+graph TD
+    A[Nurse Station / Mobile Client] -->|REST / JSON| B[FastAPI Backend]
+    A -->|Offline Buffer| C[AsyncStorage Queue]
+    C -->|Auto Flush on Connect| B
+    B --> D[ML Inference Engine]
+    D --> E[LightGBM Models & Intervals]
+    B --> F[Data Layer]
+    F --> G[(data10yrs.csv)]
+    F --> H[(nurse_log.json)]
+    F --> I[(inventory.json)]
+    F --> J[(weather_overrides.json)]
+    B -->|Optional Telemetry| K[OpenWeatherMap API]
 ```
 
-### 2) Mobile dependencies
+---
 
-```bash
-cd smartcare-mobile
-npm install
+## 📂 Repository Structure
+
+```
+SmartCare/
+├── api/
+│   ├── main.py                  # FastAPI application & REST endpoints
+│   ├── services/
+│   │   ├── demand.py            # Inventory demand inference service
+│   │   └── syndromes.py         # Syndrome probability inference service
+│   └── tests/                   # API test suite
+├── data/
+│   └── raw/
+│       ├── data10yrs.csv        # 10-year historical PHC dataset
+│       ├── inventory.json       # Live inventory store
+│       ├── nurse_log.json       # Nurse triage logs
+│       └── weather_overrides.json # Weather telemetry overrides
+├── ml/
+│   ├── artifacts/               # Trained models, feature configs, intervals
+│   ├── train_volume.py          # LightGBM volume training script
+│   ├── train_demand.py          # Multi-item demand training script
+│   ├── train_syndromes.py       # Multi-label syndrome training script
+│   └── utils.py                 # Feature engineering & lag calculation utilities
+├── smartcare-mobile/
+│   ├── App.tsx                  # Root navigation & tab bar
+│   ├── src/
+│   │   ├── api.ts               # Typed API client & data schemas
+│   │   ├── constants.ts         # Design tokens & storage helpers
+│   │   ├── offlineQueue.ts      # Offline persistence & auto-sync
+│   │   ├── types.ts             # Domain type definitions
+│   │   ├── ui.tsx               # Design system component library
+│   │   └── pages/
+│   │       ├── Home.tsx         # Volume forecast, outbreak monitor, triage logger
+│   │       ├── Alerts.tsx       # Stockout risks & outbreak surveillance
+│   │       ├── Inventory.tsx    # Stock management, days-to-stockout steppers
+│   │       ├── Login.tsx        # Nurse station sign-in & endpoint configuration
+│   │       └── Settings.tsx     # Server config, weather telemetry, cache management
+│   └── package.json
+├── tests/
+│   ├── conftest.py              # Pytest fixtures & environment setup
+│   ├── test_api.py              # FastAPI endpoint integration tests
+│   ├── test_etl.py              # Data preprocessing & feature engineering tests
+│   └── test_ml.py               # Model loading & inference validation tests
+├── requirements.txt             # Python dependencies
+└── README.md                    # Project documentation
 ```
 
-### 3) Optional local services (Postgres + MLflow)
+---
+
+## 🔬 Machine Learning Pipeline (Leak-Free)
+
+The models strictly prevent data leakage by using only past time-series observations:
+
+| Feature Category | Features Included |
+|---|---|
+| **Lags** | $t-1, t-7, t-14, t-28$ |
+| **Rolling Stats** | 7-day, 14-day, 28-day rolling mean and standard deviation (shifted by 1) |
+| **Calendar** | Day of week (`dow`), month, weekend indicator (`is_weekend`) |
+| **Meteorological** | Temperature (°C), Rainfall (mm), Humidity (%) |
+| **Syndromic Signals** | Historical case counts from nurse logs |
+
+---
+
+## 🔌 API Reference
+
+### Core Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Health check & service discovery |
+| `GET` | `/mobile/today` | Consolidated dashboard payload (volume, confidence intervals, syndromes, alerts) |
+| `GET` | `/stats/summary` | 7-day & 30-day analytics, day-of-week averages, volume trends |
+| `POST` | `/predict/volume` | LightGBM patient volume prediction |
+| `POST` | `/predict/demand` | Multi-item pharmaceutical demand forecast |
+| `POST` | `/predict/syndromes` | Syndromic probability distribution |
+| `GET` | `/alerts` | Active stockout and reorder warnings |
+| `GET` | `/alerts/outbreak` | Syndromic outbreak surge and cluster detection |
+| `GET` | `/inventory/enriched` | Real-time stock levels with calculated days-to-stockout |
+| `POST` | `/inventory/upsert` | Update medicine on-hand count or reorder point |
+| `POST` | `/nurse/log` | Record daily triage symptom observations |
+| `GET` | `/nurse/log/history` | Historical nurse triage logs (supports `?days=N`) |
+| `POST` | `/weather/fetch` | Fetch live OpenWeather telemetry for station coordinates |
+| `POST` | `/weather/upsert` | Manual override of daily climate parameters |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Python**: 3.10 to 3.13
+- **Node.js**: 18+ & npm
+- **Expo CLI**: Installed globally or via `npx`
+
+---
+
+### Backend Setup (FastAPI)
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Balaji-1206/SmartCare.git
+   cd SmartCare
+   ```
+
+2. **Create and activate a virtual environment**:
+   ```bash
+   # Windows (PowerShell)
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+
+   # macOS / Linux
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Start the FastAPI server**:
+   ```bash
+   uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+   ```
+
+5. **Access OpenAPI Docs**:
+   Navigate to [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) in your browser.
+
+---
+
+### Model Training
+
+To retrain all LightGBM models with the latest historical data:
 
 ```bash
-docker-compose up -d
+# 1. Train volume forecasting model
+python ml/train_volume.py
+
+# 2. Train pharmaceutical demand models
+python ml/train_demand.py
+
+# 3. Train syndrome probability models
+python ml/train_syndromes.py
 ```
 
-## Run the Backend API
+---
 
-From repository root:
+### Running the Test Suite
 
 ```bash
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+pytest tests/ -v
 ```
 
-API docs: `http://127.0.0.1:8000/docs`
+---
 
-### Optional Environment Variable
+### Mobile App Setup (Expo)
 
-- `OPENWEATHER_API_KEY` – required only for `POST /weather/fetch`
+1. **Navigate to the mobile directory**:
+   ```bash
+   cd smartcare-mobile
+   ```
 
-You can place this in a `.env` file at repository root.
+2. **Install JavaScript dependencies**:
+   ```bash
+   npm install
+   ```
 
-## Run the Mobile App
+3. **Start Expo development server**:
+   ```bash
+   npx expo start
+   ```
 
-From `/smartcare-mobile`:
+4. **Run on Device or Emulator**:
+   - Press `w` for Web Browser (`http://localhost:8081`).
+   - Press `a` for Android Emulator.
+   - Press `i` for iOS Simulator.
+   - Scan the QR code with **Expo Go** on your physical mobile phone.
 
-```bash
-npm start
+---
+
+### Environment Variables
+
+Create a `.env` file in the project root:
+```ini
+OPENWEATHER_API_KEY=your_openweathermap_api_key_here
 ```
 
-Useful scripts:
-- `npm run android`
-- `npm run ios`
-- `npm run web`
+---
 
-The mobile API base URL defaults to:
-- Android emulator: `http://10.0.2.2:8000`
-- iOS/Web: `http://127.0.0.1:8000`
+## ✅ Flaws Corrected in this Release
 
-## Key API Endpoints
+1. **Eliminated Target Leakage**:
+   - Removed same-day demographic patient counts (`male_patients + female_patients = total_patients`) from the volume forecasting feature set.
+   - Removed `"y_count"` (ground-truth label) from the syndrome classifier feature sets.
+2. **Dynamic Time-Series & Nurse Log Integration**:
+   - Predictions now dynamically combine historical CSV data with any logged nurse entries and weather overrides.
+3. **In-Memory Caching & Performance**:
+   - Base CSV is cached in-memory on startup instead of parsing 3,654 rows on every single request.
+4. **Thread-Safe File Persistence**:
+   - Added thread locking around JSON file read/write operations to prevent race conditions.
+5. **Mobile Offline Sync Queue Integration**:
+   - Connected `offlineQueue.ts` to `Home.tsx`, `Inventory.tsx`, and `Settings.tsx` with automatic and manual sync capabilities.
+6. **Mobile Auth State Persistence**:
+   - Enabled `isAuthed()` check in `smartcare-mobile/App.tsx` so users remain logged in across app reloads.
+7. **Populated Missing Files & Stubs**:
+   - Created `ml/utils.py`, `ml/train_volume.py`, `ml/train_demand.py`, `ml/train_syndromes.py`.
+   - Populated `smartcare-mobile/src/types.ts`.
+   - Created full test suite in `tests/test_api.py`, `tests/test_ml.py`, `tests/test_etl.py`, `tests/conftest.py`.
 
-### Predictions
-- `POST /predict/volume`
-- `POST /predict/demand`
-- `POST /predict/syndromes`
+---
 
-### Mobile Aggregation
-- `GET /mobile/today`
-- `GET /alerts`
+## 📄 License
 
-### Nurse Log
-- `POST /nurse/log`
-- `GET /nurse/log/{date}`
-
-### Inventory
-- `GET /inventory`
-- `POST /inventory/upsert`
-
-### Weather
-- `POST /weather/upsert`
-- `GET /weather/today`
-- `POST /weather/fetch`
-
-## Data and Artifacts
-
-The API expects:
-- `data/raw/data10yrs.csv`
-- Model artifacts under `ml/artifacts/` (volume, demand, syndromes)
-
-These are already present in this repository and are loaded at runtime.
+This project is open-source and available under the [MIT License](LICENSE).

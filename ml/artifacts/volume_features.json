@@ -1,21 +1,8 @@
 {
   "features": [
-    "day_of_week",
-    "male_patients",
-    "female_patients",
-    "children_patients",
-    "adult_patients",
-    "elderly_patients",
-    "fever_cases",
-    "cough_cases",
-    "diarrhea_cases",
-    "vomiting_cases",
-    "skin_rash_cases",
-    "animal_bite_cases",
-    "paracetamol_used",
-    "antibiotics_used",
-    "ors_packets_used",
-    "malaria_kits_used",
+    "dow",
+    "month",
+    "is_weekend",
     "temperature",
     "rainfall",
     "humidity",
@@ -28,8 +15,6 @@
     "roll_mean_14",
     "roll_std_14",
     "roll_mean_28",
-    "roll_std_28",
-    "dow",
-    "month"
+    "roll_std_28"
   ]
 }

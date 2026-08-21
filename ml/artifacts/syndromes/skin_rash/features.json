@@ -1,6 +1,5 @@
 {
   "features": [
-    "y_count",
     "lag_1",
     "lag_7",
     "lag_14",

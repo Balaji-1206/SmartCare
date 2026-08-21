@@ -1,8 +1,8 @@
 {
   "paracetamol": {
     "name": "Paracetamol 500mg",
-    "on_hand": 3,
-    "reorder_point": 5
+    "on_hand": 180,
+    "reorder_point": 100
   },
   "ors_packets": {
     "name": "ORS Sachets",

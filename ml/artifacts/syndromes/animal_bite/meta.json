@@ -1,4 +1,4 @@
 {
-  "threshold": 0.5,
-  "label_rule": ">=1 cases"
+  "threshold": 1.0,
+  "task": "outbreak_probability"
 }

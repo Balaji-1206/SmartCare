@@ -1,5 +1,5 @@
 // src/pages/Settings.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   SafeAreaView,
   ScrollView,
@@ -9,333 +9,521 @@ import {
   TouchableOpacity,
   Alert,
   StyleSheet,
-  ActivityIndicator,
-  Pressable,
-  Animated,
-  KeyboardAvoidingView,
   Platform,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { Card, ErrorBanner } from "../ui";
-import { C, API_DEFAULT, getApiBase, setApiBase, getNurseName, setNurseName, setAuthed } from "../constants";
+import { Card, SectionTitle, Button, ErrorBanner, InfoRow, Divider, Pill } from "../ui";
+import {
+  C,
+  API_DEFAULT,
+  getApiBase,
+  setApiBase,
+  getNurseName,
+  setNurseName,
+  setAuthed,
+  getLatLon,
+  setLatLon,
+} from "../constants";
+import { apiGet, apiPost } from "../api";
+import { flush } from "../offlineQueue";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-/**
- * Polished Settings screen — drop-in replacement
- *
- * - Ripple-free : activeOpacity / android_ripple set to remove Android green flash
- * - Theme preview, API test, Save, Export logs, Force rollover, Clear local settings, Logout
- */
-
-const K_THEME = "smartcare_theme";
-const K_REMEMBER = "smartcare_remember_device";
+const APP_VERSION = "1.1.0";
+const APP_BUILD   = "2026.08.22";
 
 export default function SettingsScreen({ onLogout }: { onLogout: () => void }) {
   const [api, setApi] = useState(API_DEFAULT);
   const [nurse, setNurse] = useState("");
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [themePreview, setThemePreview] = useState<"light" | "dark">("dark");
-  const [remember, setRemember] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [pingResult, setPingResult] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [queueCount, setQueueCount] = useState<number>(0);
+  const [apiFocus, setApiFocus] = useState(false);
+  const [nurseFocus, setNurseFocus] = useState(false);
 
-  const btnScale = useRef(new Animated.Value(1)).current;
+  // Weather & Coordinates
+  const [lat, setLat] = useState("13.0827");
+  const [lon, setLon] = useState("80.2707");
+  const [temp, setTemp] = useState("");
+  const [rainfall, setRainfall] = useState("");
+  const [humidity, setHumidity] = useState("");
+  const [fetchingWeather, setFetchingWeather] = useState(false);
+  const [savingWeather, setSavingWeather] = useState(false);
 
   useEffect(() => {
     (async () => {
       const base = await getApiBase(API_DEFAULT);
       setApi(base);
-      const n = (await getNurseName()) || "";
-      setNurse(n);
-      try {
-        const t = (await AsyncStorage.getItem(K_THEME)) as "light" | "dark" | null;
-        if (t) setThemePreview(t);
-      } catch {}
-      try {
-        const r = (await AsyncStorage.getItem(K_REMEMBER)) ?? "1";
-        setRemember(r === "1");
-      } catch {}
+      const n = await getNurseName();
+      setNurse(n || "");
+      const coords = await getLatLon();
+      if (coords.lat) setLat(coords.lat);
+      if (coords.lon) setLon(coords.lon);
+      checkQueueCount();
+      loadCurrentWeather(base);
     })();
   }, []);
 
-  const pulse = (node: Animated.Value) =>
-    Animated.sequence([Animated.timing(node, { toValue: 0.96, duration: 100, useNativeDriver: true }), Animated.timing(node, { toValue: 1, duration: 150, useNativeDriver: true })]);
+  const loadCurrentWeather = async (base: string) => {
+    try {
+      const w = await apiGet<{ temperature?: number; rainfall?: number; humidity?: number }>(base, "/weather/today");
+      if (w) {
+        if (w.temperature != null) setTemp(String(w.temperature));
+        if (w.rainfall != null) setRainfall(String(w.rainfall));
+        if (w.humidity != null) setHumidity(String(w.humidity));
+      }
+    } catch {}
+  };
 
-  async function test() {
+  const checkQueueCount = async () => {
+    try {
+      const raw = await AsyncStorage.getItem("smartcare_offline_queue");
+      const q = raw ? JSON.parse(raw) : [];
+      setQueueCount(Array.isArray(q) ? q.length : 0);
+    } catch {
+      setQueueCount(0);
+    }
+  };
+
+  function showMsg(text: string, type: "success" | "error" | "info" = "success") {
+    setStatusMsg({ text, type });
+    setTimeout(() => setStatusMsg(null), 3500);
+  }
+
+  async function testConnection() {
     try {
       setTesting(true);
-      setStatusMsg("Testing API...");
+      setPingResult(null);
       const base = api.replace(/\/+$/, "");
+      const t0 = Date.now();
       const res = await fetch(`${base}/`);
-      if (!res.ok) throw new Error(`${res.status}`);
+      const latency = Date.now() - t0;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
-      setStatusMsg(`OK — ${j?.app ?? "API reachable"}`);
-      Animated.sequence([pulse(btnScale)]).start();
+      setPingResult({ msg: `✓ Connected to ${j?.app || "API"} — ${latency}ms`, ok: true });
     } catch (err: any) {
-      setStatusMsg(`Error: ${err?.message ?? "unreachable"}`);
-      Alert.alert("SmartCare", `Error: ${err?.message ?? "cannot reach API"}`);
+      setPingResult({ msg: `✗ Cannot reach ${api}`, ok: false });
     } finally {
       setTesting(false);
     }
   }
 
-  async function save() {
+  async function saveConfig() {
     try {
       setSaving(true);
-      await setApiBase(api);
-      await setNurseName(nurse || "Nurse");
-      await AsyncStorage.setItem(K_THEME, themePreview);
-      await AsyncStorage.setItem(K_REMEMBER, remember ? "1" : "0");
-      setStatusMsg("Saved ✅");
-      Animated.sequence([pulse(btnScale)]).start();
-      Alert.alert("SmartCare", "Settings saved");
+      await setApiBase(api.trim());
+      await setNurseName(nurse.trim() || "On-duty Nurse");
+      await setLatLon(lat.trim(), lon.trim());
+      showMsg("Settings saved successfully");
     } catch (e: any) {
-      Alert.alert("SmartCare", "Save failed");
+      showMsg("Failed to save settings", "error");
     } finally {
       setSaving(false);
     }
   }
 
-  async function logout() {
-    await setAuthed(false);
-    onLogout();
+  async function handleFetchWeather() {
+    if (!lat || !lon) {
+      showMsg("Please enter valid Latitude & Longitude", "error");
+      return;
+    }
+    try {
+      setFetchingWeather(true);
+      await setLatLon(lat.trim(), lon.trim());
+      const res = await apiPost<any>(api, "/weather/fetch", {
+        lat: parseFloat(lat),
+        lon: parseFloat(lon),
+        units: "metric",
+      });
+      if (res.ok && res.applied) {
+        if (res.applied.temperature != null) setTemp(String(res.applied.temperature));
+        if (res.applied.rainfall != null) setRainfall(String(res.applied.rainfall));
+        if (res.applied.humidity != null) setHumidity(String(res.applied.humidity));
+        showMsg("Live weather telemetry pulled & applied!");
+      }
+    } catch (e: any) {
+      showMsg(e?.message ?? "Failed to fetch live weather (check API key or use manual override)", "error");
+    } finally {
+      setFetchingWeather(false);
+    }
   }
 
-  async function clearLocalSettings() {
-    Alert.alert("Confirm", "Clear saved API & nurse name? This does not touch backend.", [
+  async function handleSaveManualWeather() {
+    try {
+      setSavingWeather(true);
+      const today = new Date().toISOString().slice(0, 10);
+      const payload = {
+        date: today,
+        temperature: temp ? parseFloat(temp) : null,
+        rainfall: rainfall ? parseFloat(rainfall) : null,
+        humidity: humidity ? parseFloat(humidity) : null,
+      };
+      const res = await apiPost<any>(api, "/weather/upsert", payload);
+      if (res.ok) {
+        showMsg("Weather conditions saved and model re-calibrated!");
+      }
+    } catch (e: any) {
+      showMsg(e?.message ?? "Failed to save weather conditions", "error");
+    } finally {
+      setSavingWeather(false);
+    }
+  }
+
+  async function syncOfflineQueue() {
+    try {
+      setSyncing(true);
+      const res = await flush(api);
+      await checkQueueCount();
+      if (!res.ok) {
+        showMsg("Device offline — queue will sync when connected", "error");
+      } else if (res.count === 0) {
+        showMsg("Queue is empty. All data is synced!", "success");
+      } else {
+        showMsg(`Synced ${res.count} record(s). ${res.remaining} remaining.`);
+      }
+    } catch (e: any) {
+      showMsg(e?.message ?? "Error syncing", "error");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function clearAllLocalData() {
+    Alert.alert(
+      "Reset Local Data",
+      "This will clear all locally cached queue items and your login session. Server data is not affected.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await AsyncStorage.multiRemove([
+                "smartcare_offline_queue",
+                "smartcare_api_base",
+                "smartcare_nurse_name",
+                "smartcare_weather_lat",
+                "smartcare_weather_lon",
+              ]);
+              setQueueCount(0);
+              showMsg("Local data cleared. App will use defaults.");
+              setApi(API_DEFAULT);
+              setNurse("");
+            } catch {
+              showMsg("Failed to clear data", "error");
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleLogout() {
+    Alert.alert("Sign Out", "Exit the station? Your server data is saved.", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Clear",
+        text: "Sign Out",
         style: "destructive",
         onPress: async () => {
-          try {
-            await AsyncStorage.removeItem("smartcare_api_base");
-            await AsyncStorage.removeItem("smartcare_nurse_name");
-            await AsyncStorage.removeItem(K_THEME);
-            await AsyncStorage.removeItem(K_REMEMBER);
-            setApi(API_DEFAULT);
-            setNurse("");
-            setThemePreview("dark");
-            setRemember(true);
-            setStatusMsg("Local settings cleared");
-            Alert.alert("SmartCare", "Local settings cleared");
-          } catch {
-            Alert.alert("SmartCare", "Failed to clear storage");
-          }
+          await setAuthed(false);
+          onLogout();
         },
       },
     ]);
   }
 
-  async function doRollover() {
-    try {
-      setStatusMsg("Triggering rollover...");
-      const base = api.replace(/\/+$/, "");
-      const r = await fetch(`${base}/rollover`);
-      if (!r.ok) throw new Error(`${r.status}`);
-      const j = await r.json();
-      setStatusMsg("Rollover finished");
-      Alert.alert("SmartCare", `Rollover: ${JSON.stringify(j)}`);
-    } catch (e: any) {
-      setStatusMsg(`Rollover failed: ${e?.message ?? "error"}`);
-      Alert.alert("SmartCare", `Rollover failed: ${e?.message ?? "error"}`);
-    }
-  }
-
-  async function exportNurseLogs() {
-    try {
-      setStatusMsg("Fetching nurse logs...");
-      const base = api.replace(/\/+$/, "");
-      const r = await fetch(`${base}/debug/nurse-log`);
-      if (!r.ok) throw new Error(`${r.status}`);
-      const j = await r.json();
-      const entries = Object.keys(j || {}).length;
-      setStatusMsg(`Got ${entries} dated entries`);
-      Alert.alert("Nurse logs", `Found ${entries} dated entries.\nOpen console for full dump.`);
-      console.log("nurse-log:", j);
-    } catch (e: any) {
-      setStatusMsg(`Fetch failed: ${e?.message ?? "error"}`);
-      Alert.alert("SmartCare", `Failed to fetch logs: ${e?.message ?? "error"}`);
-    }
-  }
-
-  const themePreviewStyle =
-    themePreview === "dark"
-      ? { backgroundColor: "#0b1220", color: "#fff", borderColor: C.border }
-      : { backgroundColor: "#ffffff", color: "#0b1220", borderColor: "#e5e7eb" };
-
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 16 }}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Ionicons name="settings-outline" size={28} color={C.primary} />
-              <View style={{ marginLeft: 12 }}>
-                <Text style={styles.headerTitle}>Settings</Text>
-                <Text style={styles.headerSub}>Configure API, nurse & utilities</Text>
-              </View>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Profile Header */}
+        <View style={styles.profileHeader}>
+          <View style={styles.avatarCircle}>
+            <Text style={styles.avatarInitials}>
+              {nurse ? nurse.trim().slice(0, 2).toUpperCase() : "PH"}
+            </Text>
+          </View>
+          <View style={{ marginLeft: 14, flex: 1 }}>
+            <Text style={styles.nurseName}>{nurse || "Duty Nurse"}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
+              <Pill text="Active Station" bg={C.greenBg} textColor={C.green} icon="wifi" size="sm" />
             </View>
-            <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-              <TouchableOpacity
-                onPress={save}
-                activeOpacity={0.9}
-                style={{
-                  backgroundColor: C.primary,
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                }}
-              >
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800" }}>Save</Text>}
-              </TouchableOpacity>
-            </Animated.View>
+          </View>
+        </View>
+
+        {statusMsg && <ErrorBanner msg={statusMsg.text} type={statusMsg.type} />}
+
+        {/* Server Config */}
+        <SectionTitle title="Server Configuration" icon="server-outline" />
+        <Card style={{ marginTop: 6 }}>
+          <Text style={styles.labelSub}>FastAPI backend base URL</Text>
+          <View style={[styles.inputRow, apiFocus && styles.inputFocus]}>
+            <Ionicons name="link-outline" size={17} color={apiFocus ? C.primary : C.sub} style={{ marginRight: 8 }} />
+            <TextInput
+              value={api}
+              onChangeText={setApi}
+              autoCapitalize="none"
+              placeholder={API_DEFAULT}
+              placeholderTextColor={C.textMuted}
+              style={styles.input}
+              onFocus={() => setApiFocus(true)}
+              onBlur={() => setApiFocus(false)}
+            />
           </View>
 
-          <ErrorBanner msg={statusMsg} />
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Button title={testing ? "Pinging..." : "Test Connection"} variant="outline" loading={testing} onPress={testConnection} icon="pulse-outline" size="sm" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button title="Reset to Default" variant="secondary" size="sm"
+                onPress={() => { setApi(API_DEFAULT); setPingResult(null); }} />
+            </View>
+          </View>
 
-          {/* API Card */}
-          <Card title="API Base URL">
-            <Text style={{ color: C.sub, marginBottom: 8 }}>Where the backend lives (device reachable)</Text>
+          {pingResult && (
+            <View style={[styles.pingResult, { backgroundColor: pingResult.ok ? C.greenBg : C.redBg, borderColor: pingResult.ok ? "#bbf7d0" : "#fecaca" }]}>
+              <Text style={{ color: pingResult.ok ? C.green : C.red, fontWeight: "700", fontSize: 13 }}>{pingResult.msg}</Text>
+            </View>
+          )}
+        </Card>
 
-            <View style={styles.inputRow}>
-              <Ionicons name="link-outline" size={18} color={C.sub} style={{ marginRight: 8 }} />
-              <TextInput
-                value={api}
-                onChangeText={(v) => setApi(v)}
-                autoCapitalize="none"
-                placeholder={API_DEFAULT}
-                placeholderTextColor={C.sub}
-                style={styles.input}
-                accessibilityLabel="API base"
+        {/* Nurse Profile */}
+        <SectionTitle title="Nurse Profile" icon="person-circle-outline" />
+        <Card style={{ marginTop: 6 }}>
+          <Text style={styles.labelSub}>Your name as logged in triage reports</Text>
+          <View style={[styles.inputRow, nurseFocus && styles.inputFocus]}>
+            <Ionicons name="person-outline" size={17} color={nurseFocus ? C.primary : C.sub} style={{ marginRight: 8 }} />
+            <TextInput
+              value={nurse}
+              onChangeText={setNurse}
+              placeholder="e.g. Sister Meena"
+              placeholderTextColor={C.textMuted}
+              style={styles.input}
+              onFocus={() => setNurseFocus(true)}
+              onBlur={() => setNurseFocus(false)}
+            />
+          </View>
+          <Button title={saving ? "Saving..." : "Save Settings"} loading={saving} onPress={saveConfig} icon="save-outline" style={{ marginTop: 12 }} />
+        </Card>
+
+        {/* Location & Weather Telemetry */}
+        <SectionTitle title="Weather & Environmental Telemetry" icon="partly-sunny-outline" />
+        <Card style={{ marginTop: 6 }}>
+          <Text style={styles.labelSub}>Station Coordinates (used for ML surge correlation)</Text>
+          <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldHeader}>Latitude</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  value={lat}
+                  onChangeText={setLat}
+                  placeholder="13.0827"
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+              </View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldHeader}>Longitude</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  value={lon}
+                  onChangeText={setLon}
+                  placeholder="80.2707"
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+              </View>
+            </View>
+          </View>
+
+          <Button
+            title={fetchingWeather ? "Pulling Live Weather..." : "Fetch Live OpenWeather"}
+            variant="outline"
+            size="sm"
+            loading={fetchingWeather}
+            onPress={handleFetchWeather}
+            icon="cloud-download-outline"
+            style={{ marginBottom: 14 }}
+          />
+
+          <Divider />
+
+          <Text style={[styles.fieldHeader, { marginTop: 12 }]}>Today's Climate Conditions</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 6, marginBottom: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldSubLabel}>Temp (°C)</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  value={temp}
+                  onChangeText={setTemp}
+                  placeholder="31"
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+              </View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldSubLabel}>Rain (mm)</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  value={rainfall}
+                  onChangeText={setRainfall}
+                  placeholder="0"
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+              </View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldSubLabel}>Humidity (%)</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  value={humidity}
+                  onChangeText={setHumidity}
+                  placeholder="70"
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+              </View>
+            </View>
+          </View>
+
+          <Button
+            title={savingWeather ? "Saving Telemetry..." : "Update Weather Overrides"}
+            loading={savingWeather}
+            onPress={handleSaveManualWeather}
+            icon="checkmark-done-outline"
+            size="sm"
+          />
+        </Card>
+
+        {/* Offline Sync */}
+        <SectionTitle title="Offline Data Sync" icon="cloud-upload-outline" />
+        <Card style={{ marginTop: 6 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <Text style={styles.cardInlineTitle}>Offline Queue</Text>
+            <View style={[styles.badge, queueCount > 0 ? { backgroundColor: C.yellowBg } : { backgroundColor: C.greenBg }]}>
+              <Text style={{ color: queueCount > 0 ? C.yellow : C.green, fontWeight: "800", fontSize: 13 }}>
+                {queueCount} {queueCount === 1 ? "item" : "items"} pending
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.labelSub}>
+            When offline, nurse logs and inventory edits are stored locally and synced automatically. You can also force-sync manually.
+          </Text>
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <View style={{ flex: 2 }}>
+              <Button
+                title={syncing ? "Syncing..." : "Force Sync Now"}
+                onPress={syncOfflineQueue}
+                loading={syncing}
+                icon="sync-outline"
+                variant={queueCount > 0 ? "primary" : "secondary"}
               />
             </View>
-
-            <View style={styles.rowActions}>
-              <TouchableOpacity onPress={test} activeOpacity={0.9} style={[styles.actionBtn, { backgroundColor: testing ? "#334155" : C.primary }]}>
-                {testing ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Test API</Text>}
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={() => { setApi(API_DEFAULT); setStatusMsg(null); }} activeOpacity={0.9} style={[styles.actionBtn, styles.ghost]}>
-                <Text style={[styles.actionBtnText, { color: C.text }]}>Reset</Text>
-              </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Button title="Refresh" variant="secondary" onPress={checkQueueCount} icon="refresh-outline" />
             </View>
-
-            {!!statusMsg && <Text style={{ color: C.sub, marginTop: 10 }}>{statusMsg}</Text>}
-          </Card>
-
-          {/* Nurse Card */}
-          <Card title="Nurse">
-            <Text style={{ color: C.sub, marginBottom: 6 }}>Nurse display name</Text>
-            <View style={styles.inputRow}>
-              <Ionicons name="person-outline" size={18} color={C.sub} style={{ marginRight: 8 }} />
-              <TextInput value={nurse} onChangeText={setNurse} placeholder="Meena" placeholderTextColor={C.sub} style={styles.input} />
-            </View>
-
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 12 }}>
-              <Pressable onPress={() => setRemember((s) => !s)} android_ripple={{ color: "transparent" }} style={{ padding: 8 }}>
-                <Ionicons name={remember ? "checkmark-circle" : "ellipse-outline"} size={20} color={remember ? C.primary : C.sub} />
-              </Pressable>
-              <Text style={{ color: C.sub, marginLeft: 8 }}>Remember nurse name on this device</Text>
-            </View>
-
-            <View style={{ marginTop: 12 }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Text style={{ color: C.sub, marginRight: 8 }}>Theme</Text>
-                <TouchableOpacity activeOpacity={0.9} onPress={() => setThemePreview("light")} style={[styles.themePill, themePreview === "light" && styles.themePillActive]}>
-                  <Text style={{ fontWeight: "700", color: themePreview === "light" ? "#fff" : C.text }}>Light</Text>
-                </TouchableOpacity>
-                <TouchableOpacity activeOpacity={0.9} onPress={() => setThemePreview("dark")} style={[styles.themePill, themePreview === "dark" && styles.themePillActive, { marginLeft: 8 }]}>
-                  <Text style={{ fontWeight: "700", color: themePreview === "dark" ? "#fff" : C.text }}>Dark</Text>
-                </TouchableOpacity>
-
-                <View style={{ marginLeft: 12 }}>
-                  <View style={{ borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: themePreviewStyle.borderColor, backgroundColor: themePreviewStyle.backgroundColor }}>
-                    <Text style={{ color: themePreviewStyle.color, fontWeight: "700", textTransform: "capitalize" }}>{themePreview} preview</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </Card>
-
-          {/* Utilities */}
-          <Card title="Utilities">
-            <TouchableOpacity activeOpacity={0.9} onPress={exportNurseLogs} style={styles.utilityRow}>
-              <View style={styles.utilityLeft}>
-                <Ionicons name="download-outline" size={18} color={C.primary} style={{ marginRight: 10 }} />
-                <View>
-                  <Text style={{ color: C.text, fontWeight: "700" }}>Export nurse logs (debug)</Text>
-                  <Text style={{ color: C.sub, fontSize: 12 }}>Download logs for offline review</Text>
-                </View>
-              </View>
-              <Text style={{ color: C.sub }}>Quick</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity activeOpacity={0.9} onPress={doRollover} style={[styles.utilityRow, { marginTop: 8 }]}>
-              <View style={styles.utilityLeft}>
-                <Ionicons name="repeat-outline" size={18} color={C.yellow} style={{ marginRight: 10 }} />
-                <View>
-                  <Text style={{ color: C.text, fontWeight: "700" }}>Force rollover (append yesterday)</Text>
-                  <Text style={{ color: C.sub, fontSize: 12 }}>Run server-side rollover</Text>
-                </View>
-              </View>
-              <Text style={{ color: C.sub }}>Server</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity activeOpacity={0.9} onPress={clearLocalSettings} style={[styles.utilityRow, { marginTop: 8, backgroundColor: "#fff7f7", borderWidth: 1, borderColor: "#fecaca" }]}>
-              <View style={styles.utilityLeft}>
-                <Ionicons name="trash-outline" size={18} color={"#b91c1c"} style={{ marginRight: 10 }} />
-                <View>
-                  <Text style={{ color: "#b91c1c", fontWeight: "700" }}>Clear saved settings</Text>
-                  <Text style={{ color: C.sub, fontSize: 12 }}>Remove API & nurse name (local only)</Text>
-                </View>
-              </View>
-              <Text style={{ color: C.sub }}>Local</Text>
-            </TouchableOpacity>
-          </Card>
-
-          <View style={{ marginTop: 12 }}>
-            <TouchableOpacity activeOpacity={0.9} onPress={logout} style={{ backgroundColor: "#111827", paddingVertical: 14, borderRadius: 12, alignItems: "center", borderWidth: 1, borderColor: C.border }}>
-              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>Logout</Text>
-            </TouchableOpacity>
           </View>
+        </Card>
 
-          <View style={{ alignItems: "center", marginTop: 18, marginBottom: 36 }}>
-            <Text style={{ color: C.sub }}>SmartCare • v0.3.0</Text>
-            <Text style={{ color: C.sub, fontSize: 12, marginTop: 6 }}>Backend: {api.replace(/https?:\/\//, "")}</Text>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        {/* App Info */}
+        <SectionTitle title="About SmartCare" icon="information-circle-outline" />
+        <Card style={{ marginTop: 6 }}>
+          <InfoRow icon="code-slash-outline" label="Version" value={APP_VERSION} />
+          <Divider />
+          <InfoRow icon="calendar-outline" label="Build Date" value={APP_BUILD} />
+          <Divider />
+          <InfoRow icon="phone-portrait-outline" label="Platform" value={Platform.OS === "web" ? "Web Browser" : Platform.OS === "ios" ? "iOS" : "Android"} />
+          <Divider />
+          <InfoRow icon="hardware-chip-outline" label="ML Models" value="GBM v1.0 + Outbreak Monitor" />
+          <Divider />
+          <InfoRow icon="server-outline" label="Backend" value="FastAPI + Python 3.13" />
+        </Card>
+
+        {/* Danger Zone */}
+        <SectionTitle title="Danger Zone" icon="warning-outline" />
+        <Card style={{ marginTop: 6 }}>
+          <TouchableOpacity onPress={clearAllLocalData} activeOpacity={0.8} style={styles.dangerRow}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <View style={[styles.dangerIcon, { backgroundColor: C.yellowBg }]}>
+                <Ionicons name="trash-outline" size={18} color={C.yellow} />
+              </View>
+              <View style={{ marginLeft: 12 }}>
+                <Text style={styles.dangerTitle}>Clear Local Cache</Text>
+                <Text style={styles.dangerSub}>Wipes offline queue and stored credentials</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={C.sub} />
+          </TouchableOpacity>
+        </Card>
+
+        {/* Sign Out */}
+        <View style={{ marginTop: 20 }}>
+          <Button
+            title="Sign Out of Station"
+            variant="danger"
+            onPress={handleLogout}
+            icon="log-out-outline"
+          />
+        </View>
+
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>SmartCare PHC Intelligence Suite</Text>
+          <Text style={styles.footerSub}>v{APP_VERSION} • Powered by Machine Learning</Text>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  headerLeft: { flexDirection: "row", alignItems: "center" },
-  headerTitle: { color: C.text, fontSize: 22, fontWeight: "800" },
-  headerSub: { color: C.sub, marginTop: 2 },
-
-  inputRow: { flexDirection: "row", alignItems: "center", backgroundColor: "#071025", paddingHorizontal: 12, paddingVertical: Platform.OS === "ios" ? 12 : 8, borderRadius: 12, borderWidth: 1, borderColor: C.border },
-  input: { color: "#fff", flex: 1, fontSize: 15 },
-
-  rowActions: { flexDirection: "row", gap: 8, marginTop: 12, alignItems: "center" },
-  actionBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  actionBtnText: { color: "#fff", fontWeight: "800" },
-  ghost: { backgroundColor: C.chip },
-
-  themePill: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.chip },
-  themePillActive: { backgroundColor: C.primary },
-
-  utilityRow: { backgroundColor: C.card, padding: 12, borderRadius: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: 1, borderColor: C.border },
-  utilityLeft: { flexDirection: "row", alignItems: "center" },
-
-  // small consistent card spacing
-  controlRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-
-  // visuals
-  centered: { alignItems: "center" },
-
-  // snack / status (use ErrorBanner above for top message)
+  safe: { flex: 1, backgroundColor: C.bg },
+  scroll: { padding: 16, paddingBottom: 50 },
+  profileHeader: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "#ffffff", borderRadius: 20, padding: 16, marginBottom: 8,
+    borderWidth: 1, borderColor: C.border,
+    shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+  },
+  avatarCircle: {
+    width: 52, height: 52, borderRadius: 18, backgroundColor: C.primaryBg,
+    alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#bae6fd",
+  },
+  avatarInitials: { color: C.primary, fontWeight: "900", fontSize: 18 },
+  nurseName: { color: C.text, fontSize: 18, fontWeight: "800" },
+  labelSub: { color: C.sub, fontSize: 12, marginBottom: 8 },
+  fieldHeader: { color: C.textSecondary, fontSize: 12, fontWeight: "700", marginBottom: 4 },
+  fieldSubLabel: { color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 4 },
+  inputRow: {
+    flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff",
+    borderRadius: 14, paddingHorizontal: 14, paddingVertical: Platform.OS === "ios" ? 14 : 10,
+    borderWidth: 1, borderColor: C.inputBorder,
+  },
+  inputFocus: { borderColor: C.inputFocusBorder },
+  input: { flex: 1, color: C.text, fontSize: 14, fontWeight: "600" },
+  pingResult: {
+    padding: 10, borderRadius: 12, marginTop: 10, borderWidth: 1,
+  },
+  cardInlineTitle: { color: C.text, fontSize: 15, fontWeight: "800" },
+  badge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10 },
+  dangerRow: {
+    flexDirection: "row", justifyContent: "space-between",
+    alignItems: "center", paddingVertical: 4,
+  },
+  dangerIcon: { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  dangerTitle: { color: C.text, fontSize: 14, fontWeight: "800" },
+  dangerSub: { color: C.sub, fontSize: 12, marginTop: 2 },
+  footer: { alignItems: "center", marginTop: 28 },
+  footerText: { color: C.textMuted, fontSize: 12, fontWeight: "700" },
+  footerSub: { color: C.textMuted, fontSize: 11, marginTop: 2 },
 });

@@ -12,12 +12,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated,
-  ActivityIndicator,
-  Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Card, ErrorBanner } from "../ui";
+import { Card, Button, Pill, ErrorBanner } from "../ui";
 import {
   C,
   API_DEFAULT,
@@ -28,9 +25,6 @@ import {
   setAuthed,
 } from "../constants";
 
-const K_THEME = "smartcare_theme";
-const K_REMEMBER = "smartcare_remember_device";
-
 export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [api, setApi] = useState(API_DEFAULT);
   const [name, setName] = useState("");
@@ -38,41 +32,30 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [saving, setSaving] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [remember, setRemember] = useState<boolean>(true);
+  const [apiFocus, setApiFocus] = useState(false);
+  const [nameFocus, setNameFocus] = useState(false);
 
-  const logoScale = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(logoScale, { toValue: 1.04, duration: 1000, useNativeDriver: true }),
-        Animated.timing(logoScale, { toValue: 1.0, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1.06, duration: 1200, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1.0, duration: 1200, useNativeDriver: false }),
       ])
     );
     loop.start();
     return () => loop.stop();
-  }, [logoScale]);
-
-  const [snack, setSnack] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  useEffect(() => {
-    if (!snack) return;
-    const t = setTimeout(() => setSnack(null), 2500);
-    return () => clearTimeout(t);
-  }, [snack]);
+  }, [pulseAnim]);
 
   useEffect(() => {
     (async () => {
       try {
         const base = await getApiBase(API_DEFAULT);
         setApi(base);
-        const saved = (await getNurseName()) || "";
-        setName(saved);
-        const themeSaved = (await AsyncStorage.getItem(K_THEME)) as "light" | "dark" | null;
-        if (themeSaved) setTheme(themeSaved);
-        const rem = (await AsyncStorage.getItem(K_REMEMBER)) ?? "1";
-        setRemember(rem === "1");
+        const savedName = await getNurseName();
+        if (savedName) setName(savedName);
       } catch {}
     })();
   }, []);
@@ -83,18 +66,17 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
     setLoadingTest(true);
     try {
       const url = api.replace(/\/+$/, "") || API_DEFAULT;
+      const t0 = Date.now();
       const r = await fetch(`${url}/`);
+      const latency = Date.now() - t0;
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const j = await r.json();
-      const msg = j?.app ? `OK — ${j.app}` : "API reachable";
-      setTestStatus(msg);
-      setSnack({ type: "ok", text: "API reachable" });
+      setTestStatus(`Connected to ${j?.app || "API"} (${latency}ms)`);
     } catch (e: any) {
-      const m = e?.message ?? "Cannot reach API";
+      const m = e?.message ?? "Cannot reach API server";
       setErr(m);
       setTestStatus(null);
-      setSnack({ type: "err", text: "API unreachable" });
-      Alert.alert("SmartCare", m);
+      Alert.alert("Connection Failed", `${m}\n\nMake sure the FastAPI backend is running.`);
     } finally {
       setLoadingTest(false);
     }
@@ -103,258 +85,271 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   async function onLogin() {
     setErr(null);
     if (!name.trim()) {
-      setErr("Please enter your name");
-      setSnack({ type: "err", text: "Enter your name" });
+      setErr("Please enter a Nurse Display Name");
       return;
     }
     try {
       setSaving(true);
-      await setApiBase(api);
-      if (remember) await setNurseName(name.trim());
-      else await setNurseName("");
+      await setApiBase(api.trim());
+      if (remember) {
+        await setNurseName(name.trim());
+      } else {
+        await setNurseName("");
+      }
       await setAuthed(true);
-      await AsyncStorage.setItem(K_REMEMBER, remember ? "1" : "0");
-      await AsyncStorage.setItem(K_THEME, theme);
-      setSnack({ type: "ok", text: "Saved ✓" });
       onLoggedIn();
     } catch (e: any) {
       setSaving(false);
-      const m = e?.message ?? "Failed to save";
-      setErr(m);
-      setSnack({ type: "err", text: "Save failed" });
-      Alert.alert("SmartCare", m);
+      setErr(e?.message ?? "Failed to save login state");
     }
   }
 
-  function resetToDefault() {
+  function fillDemo() {
+    setName("Sister Meena (PHC Ward A)");
     setApi(API_DEFAULT);
-    setTestStatus(null);
-    setErr(null);
-    setSnack({ type: "ok", text: "Reset" });
   }
 
-  const [apiFocus, setApiFocus] = useState(false);
-  const [nameFocus, setNameFocus] = useState(false);
-
   return (
-    <SafeAreaView style={[styles.safe, theme === "light" ? styles.lightBG : null]}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.center}>
-            <Animated.View style={[styles.logoWrap, { transform: [{ scale: logoScale }] }]}>
-              <View style={styles.logoInner}>
-                <Ionicons name="heart-circle-outline" size={56} color={C.primary} accessibilityLabel="SmartCare logo" />
+    <SafeAreaView style={styles.safe}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Glowing Brand Hero */}
+          <View style={styles.heroSection}>
+            <Animated.View style={[styles.glowRing, { transform: [{ scale: pulseAnim }] }]}>
+              <View style={styles.iconCircle}>
+                <Ionicons name="pulse" size={42} color={C.primary} />
               </View>
             </Animated.View>
 
-            <Text style={styles.title}>SmartCare</Text>
-            <Text style={styles.subtitle}>Lightweight clinic dashboard — sign in to continue</Text>
+            <Text style={styles.brandTitle}>SmartCare</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}>
+              <Pill text="AI Clinical Intelligence" bg={C.primaryBg} textColor={C.primary} />
+            </View>
+            <Text style={styles.brandSub}>
+              Surveillance, Patient Surge Forecasting & PHC Resource Planning
+            </Text>
           </View>
 
           <ErrorBanner msg={err} />
 
-          <Card style={{ padding: 16 }}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.label}>API Base URL</Text>
-              <Pressable
-                onPress={() => {
-                  const t = theme === "dark" ? "light" : "dark";
-                  setTheme(t);
-                  AsyncStorage.setItem(K_THEME, t).catch(() => {});
-                  setSnack({ type: "ok", text: `Theme: ${t}` });
-                }}
-                android_ripple={{ color: "transparent" }}
-              >
-                <Ionicons name={theme === "dark" ? "moon" : "sunny"} size={18} color={C.sub} />
-              </Pressable>
-            </View>
-
-            <View style={[styles.inputRow, apiFocus ? styles.inputFocus : null]}>
-              <Ionicons name="server-outline" size={18} color={C.sub} style={{ marginRight: 8 }} />
+          {/* Configuration Card */}
+          <Card title="Server Endpoint" icon="server-outline">
+            <Text style={styles.labelSub}>Target FastAPI backend address</Text>
+            <View style={[styles.inputRow, apiFocus && styles.inputFocus]}>
+              <Ionicons name="link-outline" size={20} color={apiFocus ? C.primary : C.sub} style={{ marginRight: 10 }} />
               <TextInput
                 value={api}
                 onChangeText={setApi}
                 autoCapitalize="none"
                 placeholder={API_DEFAULT}
-                placeholderTextColor={C.sub}
-                keyboardType="url"
-                style={[styles.input, { flex: 1 }]}
+                placeholderTextColor={C.textMuted}
+                style={styles.input}
                 onFocus={() => setApiFocus(true)}
                 onBlur={() => setApiFocus(false)}
-                accessibilityLabel="API base url"
               />
             </View>
 
-            <View style={styles.controlRow}>
-              <TouchableOpacity
-                onPress={testApi}
-                disabled={loadingTest}
-                style={[styles.btn, { flex: 1, backgroundColor: loadingTest ? "#334155" : C.primary }]}
-                activeOpacity={0.9}
-              >
-                {loadingTest ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Test API</Text>}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={resetToDefault}
-                style={[styles.btn, styles.ghostBtn]}
-                activeOpacity={0.9}
-              >
-                <Text style={[styles.btnText, { color: C.text }]}>Reset</Text>
-              </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title={loadingTest ? "Checking..." : "Ping Server"}
+                  onPress={testApi}
+                  loading={loadingTest}
+                  variant="outline"
+                  icon="wifi-outline"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Reset Default"
+                  onPress={() => {
+                    setApi(API_DEFAULT);
+                    setTestStatus(null);
+                  }}
+                  variant="secondary"
+                  icon="refresh-outline"
+                />
+              </View>
             </View>
 
-            {testStatus && <Text style={{ color: C.green, marginTop: 10, fontWeight: "700" }}>{testStatus}</Text>}
+            {testStatus && (
+              <View style={styles.pingSuccess}>
+                <Ionicons name="checkmark-circle" size={16} color={C.green} style={{ marginRight: 6 }} />
+                <Text style={{ color: C.green, fontWeight: "700", fontSize: 12 }}>{testStatus}</Text>
+              </View>
+            )}
           </Card>
 
-          <Card style={{ padding: 16, marginTop: 12 }}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.label}>Your Details</Text>
-              <Pressable
-                onPress={() => {
-                  setRemember((r) => !r);
-                  AsyncStorage.setItem(K_REMEMBER, !remember ? "1" : "0").catch(() => {});
-                }}
-                android_ripple={{ color: "transparent" }}
-              >
-                <Ionicons
-                  name={remember ? "checkmark-circle" : "ellipse-outline"}
-                  size={18}
-                  color={remember ? C.primary : C.sub}
-                />
-              </Pressable>
-            </View>
-
-            <View style={[styles.inputRow, nameFocus ? styles.inputFocus : null]}>
-              <Ionicons name="person-circle-outline" size={18} color={C.sub} style={{ marginRight: 8 }} />
+          {/* Nurse Identity Card */}
+          <Card title="Nurse Station Sign In" icon="person-circle-outline" style={{ marginTop: 14 }}>
+            <Text style={styles.labelSub}>Staff name for triage logs and symptom tracking</Text>
+            <View style={[styles.inputRow, nameFocus && styles.inputFocus]}>
+              <Ionicons name="person-outline" size={20} color={nameFocus ? C.primary : C.sub} style={{ marginRight: 10 }} />
               <TextInput
                 value={name}
                 onChangeText={setName}
-                placeholder="Nurse name (e.g. Meena)"
-                placeholderTextColor={C.sub}
-                style={[styles.input, { flex: 1 }]}
+                placeholder="e.g. Meena (Duty Nurse)"
+                placeholderTextColor={C.textMuted}
+                style={styles.input}
                 onFocus={() => setNameFocus(true)}
                 onBlur={() => setNameFocus(false)}
-                accessibilityLabel="Nurse display name"
               />
             </View>
+
+            <TouchableOpacity
+              onPress={() => setRemember((r) => !r)}
+              activeOpacity={0.8}
+              style={styles.rememberRow}
+            >
+              <Ionicons
+                name={remember ? "checkbox" : "square-outline"}
+                size={22}
+                color={remember ? C.primary : C.sub}
+                style={{ marginRight: 10 }}
+              />
+              <Text style={{ color: C.textSecondary, fontSize: 13, fontWeight: "600" }}>
+                Keep me signed in on this station
+              </Text>
+            </TouchableOpacity>
           </Card>
 
-          <View style={{ marginTop: 18 }}>
-            <TouchableOpacity
+          {/* Action Buttons */}
+          <View style={{ marginTop: 22, gap: 12 }}>
+            <Button
+              title={saving ? "Authenticating..." : "Enter Clinical Dashboard"}
               onPress={onLogin}
-              disabled={saving}
-              style={[styles.primaryBtn, { backgroundColor: saving ? "#1e293b" : C.primary }]}
-              activeOpacity={0.9}
-            >
-              <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>{saving ? "Saving…" : "Continue"}</Text>
+              loading={saving}
+              icon="arrow-forward"
+            />
+            
+            <TouchableOpacity onPress={fillDemo} activeOpacity={0.7} style={styles.demoBtn}>
+              <Text style={styles.demoText}>⚡ Quick Fill Sample Profile</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.footer}>
-            <Text style={{ color: C.sub }}>Need help? Check your API URL & server</Text>
-            <Text style={{ color: C.sub, marginTop: 8 }}>SmartCare • v0.3.0</Text>
+            <Text style={styles.footerText}>SmartCare • Version 1.0.0 • Primary Health Center Suite</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {snack && (
-        <View
-          style={[
-            styles.snack,
-            snack.type === "ok"
-              ? { backgroundColor: "#ecfdf5", borderColor: C.green }
-              : { backgroundColor: "#fff7f7", borderColor: C.red },
-          ]}
-        >
-          <Text style={{ color: snack.type === "ok" ? C.green : C.red, fontWeight: "700" }}>{snack.text}</Text>
-        </View>
-      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  lightBG: { backgroundColor: "#f7fbff" },
-  scroll: { padding: 22, paddingTop: 40, flexGrow: 1 },
-  center: { alignItems: "center", marginBottom: 18 },
-
-  logoWrap: {
-    width: 112,
-    height: 112,
-    borderRadius: 24,
-    backgroundColor: C.card,
+  safe: {
+    flex: 1,
+    backgroundColor: C.bg,
+  },
+  scroll: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  heroSection: {
+    alignItems: "center",
+    marginTop: 16,
+    marginBottom: 10,
+  },
+  glowRing: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+    backgroundColor: C.primaryBg,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "rgba(2, 132, 199, 0.25)",
+  },
+  iconCircle: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: C.shadow,
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  logoInner: {
-    width: 92,
-    height: 92,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
+  brandTitle: {
+    fontSize: 32,
+    fontWeight: "900",
+    color: C.text,
+    letterSpacing: -0.5,
   },
-  title: { color: C.text, fontSize: 30, fontWeight: "900", marginTop: 12 },
-  subtitle: { color: C.sub, marginTop: 6, textAlign: "center", maxWidth: 340 },
-
-  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  label: { color: C.text, fontWeight: "700", fontSize: 15 },
-
+  brandSub: {
+    fontSize: 13,
+    color: C.sub,
+    textAlign: "center",
+    marginTop: 8,
+    maxWidth: 300,
+    lineHeight: 18,
+  },
+  labelSub: {
+    color: C.sub,
+    fontSize: 12,
+    marginBottom: 8,
+  },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 10,
-    paddingHorizontal: 10,
-    paddingVertical: Platform.OS === "ios" ? 12 : 8,
-    borderRadius: 12,
-    backgroundColor: "#071025",
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  inputFocus: { borderColor: C.primary },
-  input: { color: "#fff", fontSize: 15, paddingHorizontal: 6, paddingVertical: 6 },
-
-  controlRow: { flexDirection: "row", alignItems: "center", marginTop: 12 },
-  btn: {
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: 10,
-    paddingHorizontal: 18,
-  },
-  ghostBtn: { flex: 0.8, backgroundColor: C.chip, marginLeft: 12 },
-  btnText: { color: "#fff", fontWeight: "800" },
-
-  primaryBtn: {
-    paddingVertical: 14,
+    backgroundColor: C.inputBg,
     borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: C.shadow,
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
-  },
-
-  footer: { alignItems: "center", marginTop: 18 },
-
-  snack: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 26,
-    padding: 12,
-    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === "ios" ? 14 : 10,
     borderWidth: 1,
+    borderColor: C.inputBorder,
+  },
+  inputFocus: {
+    borderColor: C.inputFocusBorder,
+    backgroundColor: "#ffffff",
+  },
+  input: {
+    flex: 1,
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  rememberRow: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    marginTop: 14,
+  },
+  pingSuccess: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: C.greenBg,
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+  },
+  demoBtn: {
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  demoText: {
+    color: C.primary,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  footer: {
+    alignItems: "center",
+    marginTop: 28,
+  },
+  footerText: {
+    color: C.textMuted,
+    fontSize: 11,
+    fontWeight: "500",
   },
 });
