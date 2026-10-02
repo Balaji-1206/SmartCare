@@ -1,5 +1,13 @@
 import json
 import sys
+
+# Guard against environments where pyarrow C-extension is blocked by system security policies
+if "pyarrow" not in sys.modules:
+    try:
+        import pyarrow  # noqa: F401
+    except (ImportError, Exception):
+        sys.modules["pyarrow"] = None
+
 from pathlib import Path
 from typing import List, Tuple
 import joblib
@@ -9,12 +17,13 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error
 
 # Ensure root is in pythonpath
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
 from ml.utils import add_calendar_features, add_lag_and_rolling_features, add_weather_features, compute_residuals_intervals
 
-DATA_PATH = Path("data/raw/data10yrs.csv")
-DEMAND_ART_DIR = Path("ml/artifacts/demand")
+DATA_PATH = ROOT_DIR / "data" / "raw" / "data10yrs.csv"
+DEMAND_ART_DIR = ROOT_DIR / "ml" / "artifacts" / "demand"
 
 ITEMS = ["paracetamol", "ors_packets", "malaria_kits", "antibiotics"]
 

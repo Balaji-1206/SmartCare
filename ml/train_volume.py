@@ -17,7 +17,8 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 
 # Ensure root is in pythonpath
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
 from ml.utils import (
     add_calendar_features,
@@ -26,8 +27,8 @@ from ml.utils import (
     compute_residuals_intervals,
 )
 
-DATA_PATH = Path("data/raw/data10yrs.csv")
-ART_DIR = Path("ml/artifacts")
+DATA_PATH = ROOT_DIR / "data" / "raw" / "data10yrs.csv"
+ART_DIR = ROOT_DIR / "ml" / "artifacts"
 ART_DIR.mkdir(parents=True, exist_ok=True)
 
 FEATURE_COLS = [

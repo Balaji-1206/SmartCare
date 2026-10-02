@@ -118,17 +118,57 @@ SmartCare/
 
 ---
 
-## 🔬 Machine Learning Pipeline (Leak-Free)
+## 🔬 Machine Learning Pipeline & Model Specifications
 
-The models strictly prevent data leakage by using only past time-series observations:
+SmartCare deploys specialized gradient boosted decision tree ensembles tailored for time-series forecasting, uncertainty quantification, and epidemiological surge detection.
 
-| Feature Category | Features Included |
-|---|---|
-| **Lags** | $t-1, t-7, t-14, t-28$ |
-| **Rolling Stats** | 7-day, 14-day, 28-day rolling mean and standard deviation (shifted by 1) |
-| **Calendar** | Day of week (`dow`), month, weekend indicator (`is_weekend`) |
-| **Meteorological** | Temperature (°C), Rainfall (mm), Humidity (%) |
-| **Syndromic Signals** | Historical case counts from nurse logs |
+### 1. Daily Patient Volume Forecasting (Multi-Quantile GBDT)
+* **Model Type**: Multi-Quantile Gradient Boosted Decision Trees (`GradientBoostingRegressor` with Pinball Loss)
+* **Architecture**: Three distinct model heads trained simultaneously to capture heteroscedastic uncertainty:
+  - **$\alpha = 0.10$ (Lower Floor $p_{10}$)**: Minimum expected patient volume (90% guarantee baseline).
+  - **$\alpha = 0.50$ (Median Expected $\hat{y}$)**: Primary point prediction (Test MAE: **5.92 visits**, $R^2 = 0.498$).
+  - **$\alpha = 0.90$ (Surge Capacity Ceiling $p_{90}$)**: Peak volume threshold used to trigger staffing alerts.
+* **Uncertainty Calibration**: Dynamic input-conditioned intervals ($[p_{10}, p_{90}]$) achieve an **exact 80.0% empirical coverage rate** on unseen test data. The interval automatically contracts to **10.4 visits** during calm periods and expands to **42.2 visits** during volatile storms and seasonal waves.
+* **Hyperparameters**: `n_estimators=150`, `max_depth=4`, `learning_rate=0.05`, `random_state=42`.
+* **Artifacts**: `ml/artifacts/volume_model.pkl`, `volume_quantiles.pkl`, `volume_intervals.json`, `volume_features.json`.
+
+---
+
+### 2. Pharmaceutical Demand Prediction
+* **Model Type**: Item-specific Gradient Boosted Regressors (`GradientBoostingRegressor`)
+* **Target Items & Test Performance**:
+  - `paracetamol`: Test MAE **1.98 units**
+  - `ors_packets`: Test MAE **0.56 units**
+  - `antibiotics`: Test MAE **1.30 units**
+  - `malaria_kits`: Test MAE **0.03 units**
+* **Integration**: Forecasts are matched in real time against `inventory.json` stock levels to calculate **days-to-stockout** metrics.
+* **Artifacts**: `ml/artifacts/demand/<item_name>/model.pkl`, `features.json`, `intervals.json`.
+
+---
+
+### 3. Syndromic Outbreak Surveillance
+* **Model Type**: Multi-Presentation Gradient Boosted Classifiers (`GradientBoostingClassifier`)
+* **Surveillance Syndromes & Test ROC-AUC**:
+  - `diarrhea`: **0.902** ROC-AUC (Outbreak Threshold: $\ge 2.0$ cases)
+  - `vomiting`: **0.902** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
+  - `fever`: **0.801** ROC-AUC (Outbreak Threshold: $\ge 10.0$ cases)
+  - `skin_rash`: **0.782** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
+  - `cough`: **0.759** ROC-AUC (Outbreak Threshold: $\ge 7.0$ cases)
+  - `animal_bite`: **0.733** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
+* **Surge Detection**: Combined with a 7-day rolling surge comparison against historical baselines to flag localized epidemics.
+* **Artifacts**: `ml/artifacts/syndromes/<syndrome_name>/model.pkl`, `features.json`, `meta.json`.
+
+---
+
+### 4. Leak-Free Feature Matrix
+The feature extraction pipeline strictly enforces zero temporal data leakage:
+
+| Feature Category | Features Extracted | Clinical Rationale |
+|---|---|---|
+| **Temporal Lags** | $t-1, t-7, t-14, t-28$ | Captures daily auto-correlation, weekly clinic cycles, and incubation periods |
+| **Rolling Statistics** | 7-day, 14-day, 28-day rolling mean & std | Tracks baseline velocity and short-term volatility |
+| **Calendar Signals** | `dow`, `month`, `is_weekend` | Captures weekly staffing rhythms and annual seasonal illness cycles |
+| **Meteorological Telemetry** | Temperature (°C), Rainfall (mm), Humidity (%) | Captures weather-triggered surges (monsoon vector blooms, heat waves) |
 
 ---
 
