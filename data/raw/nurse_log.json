@@ -8,16 +8,7 @@
     "diarrhea": 3,
     "vomiting": 4,
     "cold": 2,
-    "others": 1,
-    "hlo": {
-      "fever": 0,
-      "cough": 0,
-      "diarrhea": 0,
-      "vomiting": 0,
-      "cold": 0,
-      "others": 0,
-      "by": "hlo"
-    }
+    "others": 1
   },
   "2025-09-01": {
     "fever": 2,

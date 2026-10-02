@@ -41,12 +41,25 @@ def test_add_lag_and_rolling_features():
 
 def test_volume_model_artifacts_exist_and_leak_free():
     vol_model_path = ART_DIR / "volume_model.pkl"
+    vol_quant_path = ART_DIR / "volume_quantiles.pkl"
     vol_feats_path = ART_DIR / "volume_features.json"
     vol_intv_path = ART_DIR / "volume_intervals.json"
     
     assert vol_model_path.exists(), "volume_model.pkl should exist"
+    assert vol_quant_path.exists(), "volume_quantiles.pkl should exist"
     assert vol_feats_path.exists(), "volume_features.json should exist"
     assert vol_intv_path.exists(), "volume_intervals.json should exist"
+    
+    # Check quantile bundle structure
+    quants = joblib.load(vol_quant_path)
+    assert "q10" in quants and "q90" in quants, "Quantile bundle must contain q10 and q90 models"
+    
+    # Check intervals calibration metadata
+    with open(vol_intv_path, "r") as f:
+        intv_data = json.load(f)
+    assert "coverage_80" in intv_data, "Intervals metadata should contain empirical coverage"
+    assert intv_data["coverage_80"] >= 0.70, "80% interval should achieve at least 70% coverage"
+    assert "mean_interval_width" in intv_data
     
     with open(vol_feats_path, "r") as f:
         feats_data = json.load(f)

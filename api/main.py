@@ -63,6 +63,7 @@ from .services.syndromes import list_available_syndromes, predict_one_syn
 # =========================
 ART_DIR = Path("ml/artifacts")
 VOL_MODEL_PATH = ART_DIR / "volume_model.pkl"
+VOL_QUANTILES_PATH = ART_DIR / "volume_quantiles.pkl"
 VOL_FEATS_PATH = ART_DIR / "volume_features.json"
 VOL_INTV_PATH  = ART_DIR / "volume_intervals.json"
 
@@ -78,6 +79,7 @@ if not DATA_CSV.exists():
     raise RuntimeError("data/raw/data10yrs.csv not found.")
 
 vol_model = joblib.load(VOL_MODEL_PATH)
+vol_quantiles = joblib.load(VOL_QUANTILES_PATH) if VOL_QUANTILES_PATH.exists() else None
 vol_intervals = json.load(open(VOL_INTV_PATH, "r", encoding="utf-8"))
 vol_feat_list = json.load(open(VOL_FEATS_PATH, "r", encoding="utf-8")).get("features", []) if VOL_FEATS_PATH.exists() else None
 
@@ -339,10 +341,14 @@ def predict_volume(req: VolumeReq):
     x = X_all.iloc[[-1]]
 
     yhat = max(0.0, float(vol_model.predict(x)[0]))
-    p10_res = float(vol_intervals.get("residual_p10", -5.0))
-    p90_res = float(vol_intervals.get("residual_p90",  5.0))
-    p10 = max(0.0, yhat + p10_res)
-    p90 = max(0.0, yhat + p90_res)
+    if vol_quantiles and "q10" in vol_quantiles and "q90" in vol_quantiles:
+        p10 = max(0.0, float(vol_quantiles["q10"].predict(x)[0]))
+        p90 = max(yhat, float(vol_quantiles["q90"].predict(x)[0]))
+    else:
+        p10_res = float(vol_intervals.get("residual_p10", -5.0))
+        p90_res = float(vol_intervals.get("residual_p90",  5.0))
+        p10 = max(0.0, yhat + p10_res)
+        p90 = max(0.0, yhat + p90_res)
 
     return VolumeRes(
         predicted_visits=_clean_num(yhat) or 0.0,
@@ -729,8 +735,8 @@ def mobile_today():
 
     return {
         "expected_patients": vol.predicted_visits,
-        "expected_patients_p10": _clean_num(max(0.0, vol.predicted_visits + p10_res)),
-        "expected_patients_p90": _clean_num(max(0.0, vol.predicted_visits + p90_res)),
+        "expected_patients_p10": _clean_num(vol.p10),
+        "expected_patients_p90": _clean_num(vol.p90),
         "delta_vs_yesterday_pct": delta_pct,
         "last7_volumes": last7,
         "weather": weather_ctx,
