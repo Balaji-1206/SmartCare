@@ -1,4 +1,12 @@
 from __future__ import annotations
+import sys
+# Guard against environments where pyarrow C-extension is blocked by system security policies
+if "pyarrow" not in sys.modules:
+    try:
+        import pyarrow  # noqa: F401
+    except (ImportError, Exception):
+        sys.modules["pyarrow"] = None
+
 import os
 import json
 import threading
@@ -431,9 +439,8 @@ def nurse_log(req: NurseLogReq):
     return {"ok": True, "saved": _load_nurse_log().get(date_norm, {})}
 
 @app.get("/nurse/log/history")
-def nurse_log_history_shortcut(days: int = 7):
-    """Return last N days of nurse logs. Alias for /nurse/log/history endpoint defined later."""
-    import datetime as dt
+def nurse_log_history(days: int = 7):
+    """Return last N days of nurse logs as an ordered list."""
     nl = _load_nurse_log()
     today = dt.date.today()
     result = []
@@ -890,28 +897,4 @@ def stats_summary():
         "trend_7d_pct": trend_pct,
         "total_records": int(len(tp)),
     }
-
-@app.get("/nurse/log/history")
-def nurse_log_history(days: int = 7):
-    """Return last N days of nurse logs as an ordered list."""
-    nl = _load_nurse_log()
-    today = dt.date.today()
-    result = []
-    for i in range(days - 1, -1, -1):
-        d = today - dt.timedelta(days=i)
-        d_str = d.strftime("%Y-%m-%d")
-        entry = nl.get(d_str, {})
-        result.append({
-            "date": d_str,
-            "fever": entry.get("fever", 0) or 0,
-            "cough": entry.get("cough", 0) or 0,
-            "diarrhea": entry.get("diarrhea", 0) or 0,
-            "vomiting": entry.get("vomiting", 0) or 0,
-            "cold": entry.get("cold", 0) or 0,
-            "others": entry.get("others", 0) or 0,
-            "notes": entry.get("notes", ""),
-            "by": entry.get("by", ""),
-            "has_entry": bool(entry),
-        })
-    return {"days": days, "history": result}
 
