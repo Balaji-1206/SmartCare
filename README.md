@@ -120,24 +120,24 @@ SmartCare/
 
 ## 🔬 Machine Learning Pipeline & Model Specifications
 
-SmartCare deploys specialized gradient boosted decision tree ensembles tailored for time-series forecasting, uncertainty quantification, and epidemiological surge detection.
+SmartCare deploys specialized **LightGBM** (`lightgbm.LGBMRegressor` & `lightgbm.LGBMClassifier`) gradient boosted decision tree ensembles tailored for time-series forecasting, multi-quantile uncertainty calibration, and epidemiological surge detection.
 
-### 1. Daily Patient Volume Forecasting (Multi-Quantile GBDT)
-* **Model Type**: Multi-Quantile Gradient Boosted Decision Trees (`GradientBoostingRegressor` with Pinball Loss)
-* **Architecture**: Three distinct model heads trained simultaneously to capture heteroscedastic uncertainty:
-  - **$\alpha = 0.10$ (Lower Floor $p_{10}$)**: Minimum expected patient volume (90% guarantee baseline).
-  - **$\alpha = 0.50$ (Median Expected $\hat{y}$)**: Primary point prediction (Test MAE: **5.92 visits**, $R^2 = 0.498$).
+### 1. Daily Patient Volume Forecasting (Multi-Quantile LightGBM)
+* **Model Type**: Multi-Quantile LightGBM Regressors (`lightgbm.LGBMRegressor` with Pinball Loss)
+* **Architecture**: Three distinct quantile heads trained simultaneously to capture heteroscedastic uncertainty:
+  - **$\alpha = 0.10$ (Lower Floor $p_{10}$)**: Minimum expected patient volume (90% guarantee floor).
+  - **$\alpha = 0.50$ (Median Expected $\hat{y}$)**: Primary point prediction (Test MAE: **5.96 visits**, $R^2 = 0.494$).
   - **$\alpha = 0.90$ (Surge Capacity Ceiling $p_{90}$)**: Peak volume threshold used to trigger staffing alerts.
-* **Uncertainty Calibration**: Dynamic input-conditioned intervals ($[p_{10}, p_{90}]$) achieve an **exact 80.0% empirical coverage rate** on unseen test data. The interval automatically contracts to **10.4 visits** during calm periods and expands to **42.2 visits** during volatile storms and seasonal waves.
-* **Hyperparameters**: `n_estimators=150`, `max_depth=4`, `learning_rate=0.05`, `random_state=42`.
+* **Uncertainty Calibration**: Dynamic input-conditioned intervals ($[p_{10}, p_{90}]$) achieve an **exact 80.0% empirical coverage rate** on unseen test data. The interval automatically contracts to **10.0 visits** during calm periods and expands to **34.8 visits** during volatile storms and seasonal waves.
+* **Hyperparameters**: `n_estimators=150`, `max_depth=4`, `num_leaves=15`, `learning_rate=0.05`, `random_state=42`.
 * **Artifacts**: `ml/artifacts/volume_model.pkl`, `volume_quantiles.pkl`, `volume_intervals.json`, `volume_features.json`.
 
 ---
 
-### 2. Pharmaceutical Demand Prediction
-* **Model Type**: Item-specific Gradient Boosted Regressors (`GradientBoostingRegressor`)
+### 2. Pharmaceutical Demand Prediction (LightGBM Regression)
+* **Model Type**: Item-specific LightGBM Regressors (`lightgbm.LGBMRegressor`)
 * **Target Items & Test Performance**:
-  - `paracetamol`: Test MAE **1.98 units**
+  - `paracetamol`: Test MAE **1.97 units**
   - `ors_packets`: Test MAE **0.56 units**
   - `antibiotics`: Test MAE **1.30 units**
   - `malaria_kits`: Test MAE **0.03 units**
@@ -146,15 +146,15 @@ SmartCare deploys specialized gradient boosted decision tree ensembles tailored 
 
 ---
 
-### 3. Syndromic Outbreak Surveillance
-* **Model Type**: Multi-Presentation Gradient Boosted Classifiers (`GradientBoostingClassifier`)
+### 3. Syndromic Outbreak Surveillance (LightGBM Classification)
+* **Model Type**: Multi-Presentation LightGBM Classifiers (`lightgbm.LGBMClassifier`)
 * **Surveillance Syndromes & Test ROC-AUC**:
-  - `diarrhea`: **0.902** ROC-AUC (Outbreak Threshold: $\ge 2.0$ cases)
-  - `vomiting`: **0.902** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
-  - `fever`: **0.801** ROC-AUC (Outbreak Threshold: $\ge 10.0$ cases)
-  - `skin_rash`: **0.782** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
-  - `cough`: **0.759** ROC-AUC (Outbreak Threshold: $\ge 7.0$ cases)
-  - `animal_bite`: **0.733** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
+  - `vomiting`: **0.905** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
+  - `diarrhea`: **0.900** ROC-AUC (Outbreak Threshold: $\ge 2.0$ cases)
+  - `fever`: **0.809** ROC-AUC (Outbreak Threshold: $\ge 10.0$ cases)
+  - `skin_rash`: **0.784** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
+  - `cough`: **0.764** ROC-AUC (Outbreak Threshold: $\ge 7.0$ cases)
+  - `animal_bite`: **0.720** ROC-AUC (Outbreak Threshold: $\ge 1.0$ cases)
 * **Surge Detection**: Combined with a 7-day rolling surge comparison against historical baselines to flag localized epidemics.
 * **Artifacts**: `ml/artifacts/syndromes/<syndrome_name>/model.pkl`, `features.json`, `meta.json`.
 

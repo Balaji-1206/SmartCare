@@ -13,8 +13,14 @@ from typing import List, Tuple
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import roc_auc_score, accuracy_score
+
+try:
+    import lightgbm as lgb
+    HAS_LIGHTGBM = True
+except (ImportError, Exception):
+    HAS_LIGHTGBM = False
+    from sklearn.ensemble import GradientBoostingClassifier
 
 # Ensure root is in pythonpath
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -90,9 +96,30 @@ def build_syndrome_dataset(df: pd.DataFrame, syn_code: str) -> Tuple[pd.DataFram
     X = d[FEATURE_COLS].fillna(0)
     return X, y, threshold
 
+def _create_classifier():
+    if HAS_LIGHTGBM:
+        return lgb.LGBMClassifier(
+            objective="binary",
+            n_estimators=100,
+            max_depth=3,
+            num_leaves=7,
+            learning_rate=0.05,
+            random_state=42,
+            verbose=-1,
+        )
+    else:
+        return GradientBoostingClassifier(
+            n_estimators=100,
+            max_depth=3,
+            learning_rate=0.05,
+            random_state=42,
+        )
+
 def train_syndrome_models():
+    engine_name = "LightGBM" if HAS_LIGHTGBM else "Scikit-Learn GradientBoosting"
     print(f"Loading data from {DATA_PATH}...")
     df = pd.read_csv(DATA_PATH)
+    print(f"Training Syndromic Outbreak Classifiers using [{engine_name}]...")
     
     for syn in SYNDROMES:
         print(f"\n--- Training Syndrome Model for '{syn}' ---")
@@ -102,7 +129,7 @@ def train_syndrome_models():
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
         
-        model = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
+        model = _create_classifier()
         model.fit(X_train, y_train)
         
         probs_test = model.predict_proba(X_test)[:, 1]
@@ -113,7 +140,7 @@ def train_syndrome_models():
         print(f"[{syn}] Outbreak Threshold: >= {threshold:.1f} cases | Test ROC-AUC: {auc:.3f}")
         
         # Fit full model
-        full_model = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
+        full_model = _create_classifier()
         full_model.fit(X, y)
         
         syn_dir = SYNDROMES_ART_DIR / syn
@@ -122,9 +149,14 @@ def train_syndrome_models():
         with open(syn_dir / "features.json", "w", encoding="utf-8") as f:
             json.dump({"features": FEATURE_COLS}, f, indent=2)
         with open(syn_dir / "meta.json", "w", encoding="utf-8") as f:
-            json.dump({"threshold": threshold, "task": "outbreak_probability"}, f, indent=2)
+            json.dump({
+                "syndrome": syn,
+                "threshold": threshold,
+                "engine": "lightgbm" if HAS_LIGHTGBM else "gradient_boosting",
+                "test_roc_auc": round(float(auc), 3)
+            }, f, indent=2)
             
-        print(f"[OK] Saved artifacts for '{syn}' in {syn_dir}")
+        print(f"[OK] Saved {engine_name} artifacts for '{syn}' in {syn_dir}")
 
 if __name__ == "__main__":
     train_syndrome_models()

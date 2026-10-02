@@ -13,8 +13,14 @@ from typing import List, Tuple
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error
+
+try:
+    import lightgbm as lgb
+    HAS_LIGHTGBM = True
+except (ImportError, Exception):
+    HAS_LIGHTGBM = False
+    from sklearn.ensemble import GradientBoostingRegressor
 
 # Ensure root is in pythonpath
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -63,9 +69,31 @@ def build_demand_dataset(df: pd.DataFrame, item_code: str) -> Tuple[pd.DataFrame
     y = d[col_name].astype(float)
     return X, y
 
+def _create_demand_model():
+    if HAS_LIGHTGBM:
+        return lgb.LGBMRegressor(
+            objective="regression",
+            n_estimators=100,
+            max_depth=3,
+            num_leaves=7,
+            learning_rate=0.05,
+            random_state=42,
+            verbose=-1,
+        )
+    else:
+        return GradientBoostingRegressor(
+            loss="squared_error",
+            n_estimators=100,
+            max_depth=3,
+            learning_rate=0.05,
+            random_state=42,
+        )
+
 def train_demand_models():
+    engine_name = "LightGBM" if HAS_LIGHTGBM else "Scikit-Learn GradientBoosting"
     print(f"Loading data from {DATA_PATH}...")
     df = pd.read_csv(DATA_PATH)
+    print(f"Training Pharmaceutical Demand Models using [{engine_name}]...")
     
     for item in ITEMS:
         print(f"\n--- Training Demand Model for '{item}' ---")
@@ -75,7 +103,7 @@ def train_demand_models():
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
         
-        model = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
+        model = _create_demand_model()
         model.fit(X_train, y_train)
         
         preds_test = model.predict(X_test)
@@ -83,10 +111,11 @@ def train_demand_models():
         print(f"[{item}] Test MAE: {mae:.2f} units")
         
         # Fit full model
-        full_model = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
+        full_model = _create_demand_model()
         full_model.fit(X, y)
         full_preds = full_model.predict(X)
         intervals = compute_residuals_intervals(y.values, full_preds)
+        intervals["engine"] = "lightgbm" if HAS_LIGHTGBM else "gradient_boosting"
         
         item_dir = DEMAND_ART_DIR / item
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +125,7 @@ def train_demand_models():
         with open(item_dir / "intervals.json", "w", encoding="utf-8") as f:
             json.dump(intervals, f, indent=2)
             
-        print(f"[OK] Saved artifacts for '{item}' in {item_dir}")
+        print(f"[OK] Saved {engine_name} artifacts for '{item}' in {item_dir}")
 
 if __name__ == "__main__":
     train_demand_models()

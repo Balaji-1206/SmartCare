@@ -1,4 +1,6 @@
 {
+  "syndrome": "fever",
   "threshold": 10.0,
-  "task": "outbreak_probability"
+  "engine": "lightgbm",
+  "test_roc_auc": 0.809
 }

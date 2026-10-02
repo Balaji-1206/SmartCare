@@ -1,4 +1,6 @@
 {
+  "syndrome": "animal_bite",
   "threshold": 1.0,
-  "task": "outbreak_probability"
+  "engine": "lightgbm",
+  "test_roc_auc": 0.72
 }

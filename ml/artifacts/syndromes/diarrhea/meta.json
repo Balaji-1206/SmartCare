@@ -1,4 +1,6 @@
 {
+  "syndrome": "diarrhea",
   "threshold": 2.0,
-  "task": "outbreak_probability"
+  "engine": "lightgbm",
+  "test_roc_auc": 0.9
 }

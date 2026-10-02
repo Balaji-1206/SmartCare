@@ -10,3 +10,5 @@ pydantic
 mlflow
 python-dotenv
 requests
+pytest
+httpx2

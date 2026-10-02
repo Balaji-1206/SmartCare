@@ -13,8 +13,14 @@ from typing import Tuple, Dict, Any
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
+
+try:
+    import lightgbm as lgb
+    HAS_LIGHTGBM = True
+except (ImportError, Exception):
+    HAS_LIGHTGBM = False
+    from sklearn.ensemble import GradientBoostingRegressor
 
 # Ensure root is in pythonpath
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -67,7 +73,33 @@ def build_volume_dataset(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
     y = d["total_patients"].astype(float)
     return X, y
 
+def _create_regressor(loss: str = "regression", alpha: float = 0.5, n_estimators: int = 100, max_depth: int = 3):
+    if HAS_LIGHTGBM:
+        obj = "quantile" if loss == "quantile" else "regression"
+        leaves = 15 if max_depth >= 4 else 7
+        return lgb.LGBMRegressor(
+            objective=obj,
+            alpha=alpha,
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            num_leaves=leaves,
+            learning_rate=0.05,
+            random_state=42,
+            verbose=-1,
+        )
+    else:
+        loss_param = "quantile" if loss == "quantile" else "squared_error"
+        return GradientBoostingRegressor(
+            loss=loss_param,
+            alpha=alpha,
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            learning_rate=0.05,
+            random_state=42,
+        )
+
 def train_volume_model():
+    engine_name = "LightGBM" if HAS_LIGHTGBM else "Scikit-Learn GradientBoosting"
     print(f"Loading data from {DATA_PATH}...")
     df = pd.read_csv(DATA_PATH)
     X, y = build_volume_dataset(df)
@@ -78,15 +110,13 @@ def train_volume_model():
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
     
     print(f"\n=======================================================")
-    print(f"  Training Volume Models on {len(X_train)} samples")
-    print(f"  Evaluating on {len(X_test)} unseen test samples")
+    print(f"  Training Volume Models using [{engine_name}]")
+    print(f"  Train: {len(X_train)} samples | Holdout Test: {len(X_test)} samples")
     print(f"=======================================================")
     
     # 1. Point prediction model (conditional expectation)
     print("\n[1/3] Training Point Forecast Model...")
-    point_model = GradientBoostingRegressor(
-        n_estimators=150, max_depth=4, learning_rate=0.05, random_state=42
-    )
+    point_model = _create_regressor(loss="regression", n_estimators=150, max_depth=4)
     point_model.fit(X_train, y_train)
     preds_test = point_model.predict(X_test)
     mae = mean_absolute_error(y_test, preds_test)
@@ -95,17 +125,13 @@ def train_volume_model():
     
     # 2. Lower quantile model (alpha=0.10: 10th percentile floor)
     print("\n[2/3] Training Quantile Model (alpha=0.10, Lower Bound Floor)...")
-    q10_model = GradientBoostingRegressor(
-        loss="quantile", alpha=0.10, n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42
-    )
+    q10_model = _create_regressor(loss="quantile", alpha=0.10, n_estimators=100, max_depth=3)
     q10_model.fit(X_train, y_train)
     p10_test = q10_model.predict(X_test)
     
     # 3. Upper quantile model (alpha=0.90: 90th percentile surge ceiling)
     print("\n[3/3] Training Quantile Model (alpha=0.90, Surge Capacity Ceiling)...")
-    q90_model = GradientBoostingRegressor(
-        loss="quantile", alpha=0.90, n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42
-    )
+    q90_model = _create_regressor(loss="quantile", alpha=0.90, n_estimators=100, max_depth=3)
     q90_model.fit(X_train, y_train)
     p90_test = q90_model.predict(X_test)
     
@@ -116,7 +142,7 @@ def train_volume_model():
     min_width = float(np.min(widths))
     max_width = float(np.max(widths))
     
-    print("\n----------------- Quantile Interval Calibration -----------------")
+    print(f"\n----------------- {engine_name} Calibration -----------------")
     print(f"  Target Coverage:       80.0%")
     print(f"  Empirical Coverage:    {coverage * 100:.1f}%")
     print(f"  Mean Interval Width:   {mean_width:.1f} visits")
@@ -125,20 +151,14 @@ def train_volume_model():
     print("-----------------------------------------------------------------")
     
     # Fit full models on entire dataset for production serving
-    print("\nFitting full production models on entire dataset (3,654 records)...")
-    full_point = GradientBoostingRegressor(
-        n_estimators=150, max_depth=4, learning_rate=0.05, random_state=42
-    )
+    print(f"\nFitting full production {engine_name} models on entire dataset (3,654 records)...")
+    full_point = _create_regressor(loss="regression", n_estimators=150, max_depth=4)
     full_point.fit(X, y)
     
-    full_q10 = GradientBoostingRegressor(
-        loss="quantile", alpha=0.10, n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42
-    )
+    full_q10 = _create_regressor(loss="quantile", alpha=0.10, n_estimators=100, max_depth=3)
     full_q10.fit(X, y)
     
-    full_q90 = GradientBoostingRegressor(
-        loss="quantile", alpha=0.90, n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42
-    )
+    full_q90 = _create_regressor(loss="quantile", alpha=0.90, n_estimators=100, max_depth=3)
     full_q90.fit(X, y)
     
     full_preds = full_point.predict(X)
@@ -149,7 +169,8 @@ def train_volume_model():
         "mean_interval_width": round(mean_width, 1),
         "min_interval_width": round(min_width, 1),
         "max_interval_width": round(max_width, 1),
-        "model_type": "multi_quantile_gradient_boosting",
+        "engine": "lightgbm" if HAS_LIGHTGBM else "gradient_boosting",
+        "model_type": "multi_quantile_lightgbm" if HAS_LIGHTGBM else "multi_quantile_gbr",
     }
     
     # Export artifacts
