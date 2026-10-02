@@ -134,15 +134,22 @@ SmartCare deploys specialized **LightGBM** (`lightgbm.LGBMRegressor` & `lightgbm
 
 ---
 
-### 2. Pharmaceutical Demand Prediction (LightGBM Regression)
-* **Model Type**: Item-specific LightGBM Regressors (`lightgbm.LGBMRegressor`)
-* **Target Items & Test Performance**:
-  - `paracetamol`: Test MAE **1.97 units**
-  - `ors_packets`: Test MAE **0.56 units**
-  - `antibiotics`: Test MAE **1.30 units**
-  - `malaria_kits`: Test MAE **0.03 units**
+### 2. Pharmaceutical Demand Prediction (Cross-Syndrome LightGBM Regression)
+* **Model Type**: Item-specific LightGBM Regressors (`lightgbm.LGBMRegressor`) with Cross-Syndrome Clinical Feature Engineering.
+* **Clinical Cross-Feature Engineering**:
+  Pharmaceutical demand is directly connected to primary healthcare symptom streams. Models ingest 15 leak-free clinical features derived from incoming patient symptoms and clinic footfall:
+  - **Syndromic Streams**: `total_patients`, `fever_cases`, `cough_cases`, `diarrhea_cases`, `vomiting_cases`.
+  - **Temporal Lags**: $t-1$ (yesterday's count), $t-7$ (same day last week count).
+  - **Rolling Averages**: $\text{roll\_mean\_7}$ (7-day trailing moving average shifted by $t-1$ to strictly eliminate lookahead bias).
+  - **Clinical Synergy**: E.g., fever surges directly inform antipyretic consumption (`paracetamol`), while gastrointestinal surges (`diarrhea`, `vomiting`) directly inform oral rehydration salts (`ors_packets`).
+* **Target Items & Test Performance (MAE & Error Reduction)**:
+  - `paracetamol`: Test MAE **1.72 units** *(12.7% error reduction from 1.97 baseline)*
+  - `ors_packets`: Test MAE **0.55 units** *(improved from 0.56)*
+  - `antibiotics`: Test MAE **1.27 units** *(improved from 1.30)*
+  - `malaria_kits`: Test MAE **0.03 units** *(stable high accuracy)*
 * **Integration**: Forecasts are matched in real time against `inventory.json` stock levels to calculate **days-to-stockout** metrics.
-* **Artifacts**: `ml/artifacts/demand/<item_name>/model.pkl`, `features.json`, `intervals.json`.
+* **Artifacts**: `ml/artifacts/demand/<item_name>/model.pkl`, `features.json` (30 leak-free features), `intervals.json`.
+
 
 ---
 
@@ -169,6 +176,65 @@ The feature extraction pipeline strictly enforces zero temporal data leakage:
 | **Rolling Statistics** | 7-day, 14-day, 28-day rolling mean & std | Tracks baseline velocity and short-term volatility |
 | **Calendar Signals** | `dow`, `month`, `is_weekend` | Captures weekly staffing rhythms and annual seasonal illness cycles |
 | **Meteorological Telemetry** | Temperature (°C), Rainfall (mm), Humidity (%) | Captures weather-triggered surges (monsoon vector blooms, heat waves) |
+| **Clinical Cross-Signals** | $t-1, t-7, \text{roll\_mean\_7}$ for 5 syndromes | Ingests patient symptom volume to anticipate medicine consumption spikes |
+
+---
+
+## 📊 MLOps & Experiment Tracking (MLflow & TimeSeriesSplit CV)
+
+SmartCare adopts rigorous production MLOps practices to guarantee that model evaluations reflect real-world clinical deployment across multiple seasonal years without lookahead bias.
+
+### 1. Expanding-Window TimeSeriesSplit Cross-Validation
+Standard $K$-fold cross-validation is invalid for clinical time series because randomly shuffling records causes temporal lookahead leakage. SmartCare employs a **5-fold expanding-window `TimeSeriesSplit`** with a 180-day test window across 3,600+ days of operational data:
+
+```
+Fold 1: [==== Train (2,726 days) ====] [ Val 1 (180 days) ]
+Fold 2: [====== Train (2,906 days) ======] [ Val 2 (180 days) ]
+Fold 3: [======== Train (3,086 days) ========] [ Val 3 (180 days) ]
+Fold 4: [========== Train (3,266 days) ==========] [ Val 4 (180 days) ]
+Fold 5: [============ Train (3,446 days) ============] [ Val 5 (180 days) ]
+Final:  [============== Train (3,289 days) ==============] [ Holdout (365 days) ]
+```
+
+#### Cross-Validation Benchmark Results
+
+| Model / Target | Metric | 5-Fold CV Mean ± Std | Holdout Test (Last 365 Days) |
+|---|---|---|---|
+| **Patient Volume** | MAE / WAPE | **6.04 ± 0.29 visits** (12.7% WAPE) | **5.96 visits** (12.6% WAPE) |
+| **Volume Model $R^2$** | $R^2$ | **0.455 ± 0.063** | **0.494** |
+| **Demand: Paracetamol** | MAE / WAPE | **1.75 ± 0.14 units** (23.7% WAPE) | **1.72 units** (23.0% WAPE) |
+| **Demand: ORS Packets** | MAE / WAPE | **0.55 ± 0.04 units** (36.9% WAPE) | **0.55 units** (36.3% WAPE) |
+| **Demand: Antibiotics** | MAE / WAPE | **1.30 ± 0.07 units** (30.8% WAPE) | **1.27 units** (29.8% WAPE) |
+| **Demand: Malaria Kits**| MAE / WAPE | **0.03 ± 0.02 units** (46.0% WAPE) | **0.03 units** (56.1% WAPE) |
+| **Surveillance: Vomiting** | ROC-AUC | **0.912 ± 0.041** (86.7% Acc) | **0.905** (84.4% Acc) |
+| **Surveillance: Diarrhea** | ROC-AUC | **0.902 ± 0.038** (86.8% Acc) | **0.900** (84.4% Acc) |
+| **Surveillance: Animal Bite** | ROC-AUC | **0.780 ± 0.049** (79.7% Acc) | **0.720** (77.8% Acc) |
+| **Surveillance: Fever** | ROC-AUC | **0.776 ± 0.027** (73.9% Acc) | **0.809** (75.1% Acc) |
+| **Surveillance: Skin Rash** | ROC-AUC | **0.763 ± 0.028** (72.6% Acc) | **0.784** (73.2% Acc) |
+| **Surveillance: Cough** | ROC-AUC | **0.747 ± 0.027** (71.3% Acc) | **0.764** (72.1% Acc) |
+
+---
+
+### 2. Centralized Experiment Tracking with MLflow
+All model training pipelines automatically log hyperparameters, fold-by-fold cross-validation metrics, holdout test metrics, and serialized model artifacts to an embedded SQLite tracking database (`mlflow.db`).
+
+* **Experiments**:
+  - `SmartCare_Volume_Forecasting`: Tracks point & multi-quantile LightGBM regressors with pinball loss calibrations.
+  - `SmartCare_Demand_Forecasting`: Tracks cross-syndrome medicine demand models across all pharmaceutical SKUs.
+  - `SmartCare_Syndrome_Surveillance`: Tracks binary outbreak classifiers across 6 syndrome categories.
+
+#### Launching the MLflow UI
+To inspect training trajectories, compare model runs, and visualize cross-validation folds:
+
+```bash
+# Activate virtual environment
+.\venv\Scripts\activate
+
+# Launch MLflow Dashboard
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Navigate to **`http://127.0.0.1:5000`** in your browser to explore the interactive dashboard.
 
 ---
 

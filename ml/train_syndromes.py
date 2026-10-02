@@ -8,12 +8,16 @@ if "pyarrow" not in sys.modules:
     except (ImportError, Exception):
         sys.modules["pyarrow"] = None
 
+import os
+os.environ["MLFLOW_DISABLE_AGENT_HINT"] = "1"
+
 from pathlib import Path
 from typing import List, Tuple
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.model_selection import TimeSeriesSplit
 
 try:
     import lightgbm as lgb
@@ -21,6 +25,12 @@ try:
 except (ImportError, Exception):
     HAS_LIGHTGBM = False
     from sklearn.ensemble import GradientBoostingClassifier
+
+try:
+    import mlflow
+    HAS_MLFLOW = True
+except (ImportError, Exception):
+    HAS_MLFLOW = False
 
 # Ensure root is in pythonpath
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -30,6 +40,7 @@ from ml.utils import add_calendar_features, add_lag_and_rolling_features, add_we
 
 DATA_PATH = ROOT_DIR / "data" / "raw" / "data10yrs.csv"
 SYNDROMES_ART_DIR = ROOT_DIR / "ml" / "artifacts" / "syndromes"
+MLFLOW_DB_URI = f"sqlite:///{ROOT_DIR.as_posix()}/mlflow.db"
 
 SYNDROMES = ["animal_bite", "cough", "diarrhea", "fever", "skin_rash", "vomiting"]
 
@@ -121,25 +132,66 @@ def train_syndrome_models():
     df = pd.read_csv(DATA_PATH)
     print(f"Training Syndromic Outbreak Classifiers using [{engine_name}]...")
     
+    if HAS_MLFLOW:
+        try:
+            mlflow.set_tracking_uri(MLFLOW_DB_URI)
+            mlflow.set_experiment("SmartCare_Syndrome_Surveillance")
+        except Exception as e:
+            print(f"[MLOps Warning] Failed to initialize MLflow: {e}")
+            
     for syn in SYNDROMES:
-        print(f"\n--- Training Syndrome Model for '{syn}' ---")
+        print(f"\n=======================================================")
+        print(f"  Training Outbreak Model for '{syn}'")
+        print(f"=======================================================")
         X, y, threshold = build_syndrome_dataset(df, syn)
         
+        # 1. 5-Fold Expanding Window TimeSeriesSplit
+        print(f"--- [MLOps] 5-Fold Expanding Window TimeSeriesSplit for '{syn}' ---")
+        tscv = TimeSeriesSplit(n_splits=5, test_size=180)
+        cv_aucs = []
+        cv_accs = []
+        
+        for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
+            X_fold_tr, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_fold_tr, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+            
+            fold_model = _create_classifier()
+            fold_model.fit(X_fold_tr, y_fold_tr)
+            val_probs = fold_model.predict_proba(X_fold_val)[:, 1]
+            val_preds = (val_probs >= 0.5).astype(int)
+            
+            try:
+                f_auc = roc_auc_score(y_fold_val, val_probs) if len(np.unique(y_fold_val)) > 1 else 0.5
+            except Exception:
+                f_auc = 0.5
+            f_acc = accuracy_score(y_fold_val, val_preds)
+            
+            cv_aucs.append(f_auc)
+            cv_accs.append(f_acc)
+            print(f"  Fold {fold}/5: Train={len(train_idx)}, Val={len(val_idx)} | ROC-AUC: {f_auc:.3f} | Accuracy: {f_acc * 100:.1f}%")
+            
+        mean_cv_auc = float(np.mean(cv_aucs))
+        std_cv_auc = float(np.std(cv_aucs))
+        mean_cv_acc = float(np.mean(cv_accs))
+        print(f"  -> 5-Fold CV Mean ROC-AUC: {mean_cv_auc:.3f} ± {std_cv_auc:.3f} | Mean Accuracy: {mean_cv_acc * 100:.1f}%")
+        
+        # 2. Holdout Test Set Evaluation (last 365 days)
         split_idx = len(X) - 365
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
         
         model = _create_classifier()
         model.fit(X_train, y_train)
-        
         probs_test = model.predict_proba(X_test)[:, 1]
+        preds_test = (probs_test >= 0.5).astype(int)
         try:
-            auc = roc_auc_score(y_test, probs_test)
+            test_auc = roc_auc_score(y_test, probs_test) if len(np.unique(y_test)) > 1 else 0.5
         except Exception:
-            auc = 0.5
-        print(f"[{syn}] Outbreak Threshold: >= {threshold:.1f} cases | Test ROC-AUC: {auc:.3f}")
+            test_auc = 0.5
+        test_acc = accuracy_score(y_test, preds_test)
+        print(f"  Holdout Test -> Threshold: >= {threshold:.1f} cases | ROC-AUC: {test_auc:.3f} | Accuracy: {test_acc * 100:.1f}%")
         
-        # Fit full model
+        # 3. Fit full model on entire dataset
         full_model = _create_classifier()
         full_model.fit(X, y)
         
@@ -153,10 +205,45 @@ def train_syndrome_models():
                 "syndrome": syn,
                 "threshold": threshold,
                 "engine": "lightgbm" if HAS_LIGHTGBM else "gradient_boosting",
-                "test_roc_auc": round(float(auc), 3)
+                "test_roc_auc": round(float(test_auc), 3),
+                "test_accuracy": round(float(test_acc), 3),
+                "cv_mean_roc_auc": round(mean_cv_auc, 3),
+                "cv_mean_accuracy": round(mean_cv_acc, 3),
             }, f, indent=2)
             
         print(f"[OK] Saved {engine_name} artifacts for '{syn}' in {syn_dir}")
+        
+        # 4. MLflow Experiment Logging
+        if HAS_MLFLOW:
+            try:
+                with mlflow.start_run(run_name=f"syndrome_{syn}_lightgbm"):
+                    mlflow.log_params({
+                        "syndrome": syn,
+                        "engine": engine_name,
+                        "threshold": threshold,
+                        "features_count": len(FEATURE_COLS),
+                        "n_estimators": 100,
+                        "max_depth": 3,
+                        "learning_rate": 0.05,
+                        "cv_splits": 5,
+                        "cv_test_size": 180,
+                    })
+                    for k in range(5):
+                        mlflow.log_metric(f"cv_fold_{k+1}_auc", round(cv_aucs[k], 4))
+                        mlflow.log_metric(f"cv_fold_{k+1}_acc", round(cv_accs[k], 4))
+                    mlflow.log_metric("cv_mean_auc", round(mean_cv_auc, 4))
+                    mlflow.log_metric("cv_std_auc", round(std_cv_auc, 4))
+                    mlflow.log_metric("cv_mean_acc", round(mean_cv_acc, 4))
+                    mlflow.log_metric("test_roc_auc", round(test_auc, 4))
+                    mlflow.log_metric("test_accuracy", round(test_acc, 4))
+                    mlflow.log_artifact(str(syn_dir / "features.json"))
+                    mlflow.log_artifact(str(syn_dir / "meta.json"))
+                    mlflow.set_tag("pipeline", "syndrome_surveillance")
+                    mlflow.set_tag("syndrome", syn)
+                print(f"[MLOps] Logged '{syn}' run to MLflow experiment 'SmartCare_Syndrome_Surveillance'")
+            except Exception as e:
+                print(f"[MLOps Warning] Failed to log MLflow run for '{syn}': {e}")
 
 if __name__ == "__main__":
     train_syndrome_models()
+

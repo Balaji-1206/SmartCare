@@ -14,6 +14,21 @@
     "month",
     "temperature",
     "rainfall",
-    "humidity"
+    "humidity",
+    "total_patients_lag_1",
+    "total_patients_lag_7",
+    "total_patients_roll_mean_7",
+    "fever_cases_lag_1",
+    "fever_cases_lag_7",
+    "fever_cases_roll_mean_7",
+    "cough_cases_lag_1",
+    "cough_cases_lag_7",
+    "cough_cases_roll_mean_7",
+    "diarrhea_cases_lag_1",
+    "diarrhea_cases_lag_7",
+    "diarrhea_cases_roll_mean_7",
+    "vomiting_cases_lag_1",
+    "vomiting_cases_lag_7",
+    "vomiting_cases_roll_mean_7"
   ]
 }

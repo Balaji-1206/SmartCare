@@ -6,5 +6,8 @@
   "min_interval_width": 10.0,
   "max_interval_width": 34.8,
   "engine": "lightgbm",
-  "model_type": "multi_quantile_lightgbm"
+  "model_type": "multi_quantile_lightgbm",
+  "cv_mean_mae": 6.04,
+  "cv_mean_wape": 0.127,
+  "cv_mean_r2": 0.455
 }

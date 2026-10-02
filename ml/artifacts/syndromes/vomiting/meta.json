@@ -2,5 +2,8 @@
   "syndrome": "vomiting",
   "threshold": 1.0,
   "engine": "lightgbm",
-  "test_roc_auc": 0.905
+  "test_roc_auc": 0.905,
+  "test_accuracy": 0.844,
+  "cv_mean_roc_auc": 0.912,
+  "cv_mean_accuracy": 0.867
 }

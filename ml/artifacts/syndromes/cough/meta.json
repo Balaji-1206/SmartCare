@@ -2,5 +2,8 @@
   "syndrome": "cough",
   "threshold": 7.0,
   "engine": "lightgbm",
-  "test_roc_auc": 0.764
+  "test_roc_auc": 0.764,
+  "test_accuracy": 0.721,
+  "cv_mean_roc_auc": 0.747,
+  "cv_mean_accuracy": 0.713
 }

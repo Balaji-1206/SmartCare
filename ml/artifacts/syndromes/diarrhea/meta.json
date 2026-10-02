@@ -2,5 +2,8 @@
   "syndrome": "diarrhea",
   "threshold": 2.0,
   "engine": "lightgbm",
-  "test_roc_auc": 0.9
+  "test_roc_auc": 0.9,
+  "test_accuracy": 0.844,
+  "cv_mean_roc_auc": 0.902,
+  "cv_mean_accuracy": 0.868
 }

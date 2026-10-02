@@ -2,5 +2,8 @@
   "syndrome": "animal_bite",
   "threshold": 1.0,
   "engine": "lightgbm",
-  "test_roc_auc": 0.72
+  "test_roc_auc": 0.72,
+  "test_accuracy": 0.778,
+  "cv_mean_roc_auc": 0.78,
+  "cv_mean_accuracy": 0.797
 }

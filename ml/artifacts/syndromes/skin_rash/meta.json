@@ -2,5 +2,8 @@
   "syndrome": "skin_rash",
   "threshold": 1.0,
   "engine": "lightgbm",
-  "test_roc_auc": 0.784
+  "test_roc_auc": 0.784,
+  "test_accuracy": 0.732,
+  "cv_mean_roc_auc": 0.763,
+  "cv_mean_accuracy": 0.726
 }

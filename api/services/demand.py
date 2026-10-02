@@ -5,7 +5,12 @@ import numpy as np
 import joblib
 import json
 
-from ml.utils import add_calendar_features, add_lag_and_rolling_features, add_weather_features
+from ml.utils import (
+    add_calendar_features,
+    add_clinical_cross_features,
+    add_lag_and_rolling_features,
+    add_weather_features,
+)
 
 ART_ROOT = Path("ml/artifacts/demand")
 
@@ -29,6 +34,7 @@ def _build_features_for_item(hist_df: pd.DataFrame, item_col: str) -> pd.DataFra
     d = add_calendar_features(d, "date")
     d = add_weather_features(d)
     d = add_lag_and_rolling_features(d, item_col, lags=[1, 7, 14, 28], roll_windows=[7, 14, 28])
+    d = add_clinical_cross_features(d)
 
     lag_cols = [c for c in d.columns if c.startswith("lag_") or c.startswith("roll_")]
     d = d.dropna(subset=lag_cols).reset_index(drop=True)

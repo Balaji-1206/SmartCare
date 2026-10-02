@@ -2,5 +2,8 @@
   "syndrome": "fever",
   "threshold": 10.0,
   "engine": "lightgbm",
-  "test_roc_auc": 0.809
+  "test_roc_auc": 0.809,
+  "test_accuracy": 0.751,
+  "cv_mean_roc_auc": 0.776,
+  "cv_mean_accuracy": 0.739
 }

@@ -7,8 +7,10 @@ import pytest
 
 from ml.utils import (
     add_calendar_features,
+    add_clinical_cross_features,
     add_lag_and_rolling_features,
     add_weather_features,
+    calculate_wape,
     compute_residuals_intervals,
 )
 from api.services.demand import list_available_items, predict_one_item
@@ -38,6 +40,23 @@ def test_add_lag_and_rolling_features():
     assert "roll_std_7" in res.columns
     assert res.loc[10, "lag_1"] == 9
     assert res.loc[10, "lag_7"] == 3
+
+def test_add_clinical_cross_features():
+    df = pd.DataFrame({
+        "total_patients": list(range(10, 30)),
+        "fever_cases": list(range(20)),
+    })
+    res = add_clinical_cross_features(df, clinical_cols=["total_patients", "fever_cases"])
+    assert "total_patients_lag_1" in res.columns
+    assert "total_patients_lag_7" in res.columns
+    assert "total_patients_roll_mean_7" in res.columns
+    assert "fever_cases_lag_1" in res.columns
+    # Row 10: lag_1 should be 19 (for total_patients which is range(10, 30))
+    assert res.loc[10, "total_patients_lag_1"] == 19
+    # Check graceful fallback when column is missing
+    res_missing = add_clinical_cross_features(pd.DataFrame({"x": [1, 2]}), clinical_cols=["fever_cases"])
+    assert "fever_cases_lag_1" in res_missing.columns
+    assert res_missing["fever_cases_lag_1"].iloc[0] == 0.0
 
 def test_volume_model_artifacts_exist_and_leak_free():
     vol_model_path = ART_DIR / "volume_model.pkl"
@@ -103,3 +122,21 @@ def test_syndromes_inference():
         assert "syndrome" in res
         assert "prob" in res
         assert 0.0 <= res["prob"] <= 1.0, f"Probability for {syn} must be between 0 and 1"
+
+def test_calculate_wape():
+    y_true = np.array([10.0, 20.0, 30.0])
+    y_pred = np.array([12.0, 18.0, 33.0])
+    # abs diff: 2 + 2 + 3 = 7. sum y_true: 60. WAPE = 7 / 60
+    assert abs(calculate_wape(y_true, y_pred) - (7.0 / 60.0)) < 1e-5
+    # Zero denominator
+    assert calculate_wape(np.array([0.0]), np.array([0.0])) == 0.0
+
+def test_mlops_cv_metadata_exists():
+    vol_intv_path = ART_DIR / "volume_intervals.json"
+    assert vol_intv_path.exists()
+    with open(vol_intv_path, "r") as f:
+        meta = json.load(f)
+    assert "cv_mean_mae" in meta
+    assert "cv_mean_wape" in meta
+    assert meta["cv_mean_mae"] > 0
+

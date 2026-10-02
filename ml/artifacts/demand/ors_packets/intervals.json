@@ -1,5 +1,9 @@
 {
-  "residual_p10": -0.7906018783552755,
-  "residual_p90": 0.9099137586774723,
-  "engine": "lightgbm"
+  "residual_p10": -0.7751031021994538,
+  "residual_p90": 0.8747344291840438,
+  "engine": "lightgbm",
+  "cv_mean_mae": 0.55,
+  "cv_mean_wape": 0.369,
+  "test_mae": 0.55,
+  "test_wape": 0.363
 }

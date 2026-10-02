@@ -94,6 +94,10 @@ desktop.ini
 *.pem
 *.key
 
-# --- Temporary ---
+# --- Temporary & ML Tracking ---
 tmp/
 temp/
+mlruns/
+mlflow.db
+*.db
+
